@@ -76,15 +76,20 @@ class TestCompress:
         assert not m.compressed
         assert m.headers.get("Content-Encoding") == ""
 
-    def test_non_bytes_body_left_untouched_without_content_encoding(self):
+    def test_streaming_body_left_untouched_without_content_encoding(self):
         # Content-Encoding must only be advertised when the bytes actually sent
-        # were transformed accordingly (RFC 9110 §8.4). A plain str body isn't
-        # os.PathLike, so it is never read/offloaded here, and no encoding is
-        # applied to it — asserting Content-Encoding in this case would make
-        # the header lie about the representation actually transmitted.
-        m = Message(body="/some/path", headers=Headers([]))
+        # were transformed accordingly (RFC 9110 §8.4). A streaming (async
+        # iterator) body is neither bytes nor a str/PathLike file path, so
+        # compress() never reads or transforms it — asserting Content-Encoding
+        # in this case would make the header lie about the representation
+        # actually transmitted.
+        async def stream():
+            yield b"chunk"
+
+        body = stream()
+        m = Message(body=body, headers=Headers([]))
         m.compress(["gzip"])
-        assert m.body == "/some/path"
+        assert m.body is body
         assert m.headers.get("Content-Encoding") is None
         assert not m.compressed
 
@@ -189,10 +194,17 @@ class TestMinify:
         m.minify()
         assert m.body == b"<html></html>"
 
-    def test_noop_when_body_is_not_bytes(self):
-        m = Message(body="/some/path", headers=Headers([("Content-Type", ["text/html"])]), minification=True)
+    def test_noop_when_body_is_streaming(self):
+        # A streaming (async iterator) body is neither bytes nor a str/PathLike
+        # file path, so minify() never reads or transforms it.
+        async def stream():
+            yield b"<html></html>"
+
+        body = stream()
+        m = Message(body=body, headers=Headers([("Content-Type", ["text/html"])]), minification=True)
         m.minify()
         assert not m.minified
+        assert m.body is body
 
     def test_invalid_markup_does_not_raise(self):
         m = Message(body=b"<<<not valid>>>", headers=Headers([("Content-Type", ["image/svg+xml"])]), minification=True)
