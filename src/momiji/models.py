@@ -33,7 +33,7 @@ class Message:
     headers: Headers = field(default_factory=lambda: Headers({}))
     trailers: Optional[Headers] = None
 
-    body: Optional[bytes | AsyncIterator[bytes] | os.PathLike] = None
+    body: Optional[bytes | str | AsyncIterator[bytes] | os.PathLike] = None
 
     scheme: Literal["http", "https"] = "http"
     secure: bool = False
@@ -82,7 +82,7 @@ class Message:
 
             self.headers.set("Content-Encoding", str(content_encoding))
 
-        elif isinstance(self.body, os.PathLike):
+        elif isinstance(self.body, (str, os.PathLike)):
             filepath = self.body
             filesize = os.stat(filepath).st_size
 
@@ -117,7 +117,7 @@ class Message:
             self.headers.remove("Content-Encoding")
             self.compressed = False
 
-        elif isinstance(self.body, os.PathLike):
+        elif isinstance(self.body, (str, os.PathLike)):
             filepath = self.body
             filesize = os.stat(filepath).st_size
 
@@ -160,7 +160,7 @@ class Message:
             except Exception:
                 pass
 
-        elif isinstance(self.body, os.PathLike):
+        elif isinstance(self.body, (str, os.PathLike)):
             filepath = self.body
             filesize = os.stat(filepath).st_size
 

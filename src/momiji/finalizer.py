@@ -9,8 +9,6 @@ from .headers import CommaHeader
 HOP_BY_HOP_HEADERS = frozenset({"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te", "trailer", "transfer-encoding", "upgrade"})
 FORBIDDEN_TRAILERS = frozenset({"transfer-encoding", "content-length", "host"})
 
-MAX_INLINE_FILE_SIZE = 10 * 1024 * 1024
-
 async def finalize_request(request: Request):
     if request.protocol == "HTTP/1.1":
         host_values = request.headers["Host"]
