@@ -16,6 +16,7 @@ dependencies = [
     "rcssmin",
     "rjsmin",
     "scour",
+    "xxhash",
     "zstandard",
     "brotlicffi"
 ]

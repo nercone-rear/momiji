@@ -2,6 +2,7 @@ import os
 import json
 import gzip
 import zlib
+import xxhash
 import rjsmin
 import rcssmin
 import ipaddress
@@ -15,7 +16,7 @@ from dataclasses import dataclass, field
 from collections.abc import AsyncIterator
 
 from .url import URL
-from .headers import Headers, CommaHeader, ContentType
+from .headers import Headers, CommaHeader, ContentType, ETag
 
 class Role(Enum):
     ORIGIN = "Origin"
@@ -57,14 +58,14 @@ class Message:
     def has_real_body(self) -> bool:
         return self.body is not None and isinstance(self.body, bytes)
 
-    def compress(self, encodings: Optional[str] = None):
+    def compress(self, encodings: Optional[str] = None, *, max_offload_filesize: int = 32768):
         if not (self.compression and not self.compressed and self.body is not None):
             return
 
         content_encoding = CommaHeader(self.headers.get("Content-Encoding", ""))
 
-        for encoding in encodings:
-            if self.has_real_body:
+        if isinstance(self.body, bytes):
+            for encoding in encodings:
                 if encoding == "zstd":
                     self.body = zstandard.ZstdCompressor(level=3).compress(self.body)
                 elif encoding == "br":
@@ -79,16 +80,27 @@ class Message:
             content_encoding.append(encoding)
             self.compressed = True
 
+        elif isinstance(self.body, os.PathLike):
+            filepath = self.body
+            filesize = os.stat(filepath).st_size
+
+            if filesize <= max_offload_filesize:
+                with open(filepath, "rb") as f:
+                    self.body = f.read()
+
+                self.compress()
+                return
+
         self.headers.set("Content-Encoding", str(content_encoding))
 
-    def decompress(self):
+    def decompress(self, *, max_offload_filesize: int = 32768):
         if not (self.compression and self.compressed and self.body is not None):
             return
 
         content_encoding = CommaHeader(self.headers.get("Content-Encoding", ""))
 
-        for encoding in reversed(content_encoding.raw):
-            if self.has_real_body:
+        if isinstance(self.body, bytes):
+            for encoding in reversed(content_encoding.raw):
                 if encoding == "zstd":
                     self.body = zstandard.ZstdDecompressor().decompress(self.body)
                 elif encoding == "br":
@@ -106,13 +118,24 @@ class Message:
             self.headers.remove("Content-Encoding")
             self.compressed = False
 
-    def minify(self):
+        elif isinstance(self.body, os.PathLike):
+            filepath = self.body
+            filesize = os.stat(filepath).st_size
+
+            if filesize <= max_offload_filesize:
+                with open(filepath, "rb") as f:
+                    self.body = f.read()
+
+                self.decompress()
+                return
+
+    def minify(self, *, max_offload_filesize: int = 32768):
         if not (self.minification and not self.minified and self.body is not None):
             return
 
         content_type = ContentType(self.headers.get("Content-Type", ""))
 
-        if self.has_real_body:
+        if isinstance(self.body, bytes):
             try:
                 if content_type.essence.startswith("text/html"):
                     self.body = minify_html.minify(self.body.decode("utf-8", errors="replace"), minify_js=True, minify_css=True, keep_comments=True, keep_html_and_head_opening_tags=True).encode("utf-8")
@@ -139,6 +162,17 @@ class Message:
             except Exception:
                 pass
 
+        elif isinstance(self.body, os.PathLike):
+            filepath = self.body
+            filesize = os.stat(filepath).st_size
+
+            if filesize <= max_offload_filesize:
+                with open(filepath, "rb") as f:
+                    self.body = f.read()
+
+                self.minify()
+                return
+
 @dataclass
 class Request(Message):
     method: Literal["GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH"]
@@ -162,3 +196,11 @@ class Response(Message):
     status_code: int = 200
 
     range: Optional[tuple[int, int]] = field(default=None)
+
+    @property
+    def etag(self) -> ETag:
+        if isinstance(self.body, bytes):
+            return ETag(f'"{xxhash.xxh3_128(self.body).hexdigest()}"')
+        elif isinstance(self.body, os.PathLike):
+            stat = os.stat(self.body)
+            return ETag(f'"{int(stat.st_mtime_ns):x}-{stat.st_size:x}"')
