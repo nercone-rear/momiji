@@ -4,7 +4,7 @@ build-backend = "uv_build"
 
 [project]
 name = "rear-momiji"
-version = "3.3.2"
+version = "3.3.3"
 description = "HTTP/1.1 Server for Python"
 readme = { file = "README.md", content-type = "text/markdown" }
 authors = [ { name = "Nercone", email = "nercone@nercone.dev" } ]
