@@ -1,7 +1,7 @@
 # Momiji
-Python製のHTTP/1.1サーバー
+An HTTP/1.1 server written in Python
 
-## 概要
-MomijiはPython製のHTTP/1.1サーバーです。オリジンサーバーとして必要な基本的な機能、および実験的なプロキシ機能を備えています。
+## Overview
+Momiji is an HTTP/1.1 server written in Python. It provides the essential features required of an origin server, as well as experimental proxy capabilities.
 
-Nginxのようなリバースプロキシのバックエンドとして使用することを想定しているためSSL/TLSやHTTP/2/3には対応していません。
+Since it is intended to be used as a backend for a reverse proxy such as Nginx, it does not support SSL/TLS or HTTP/2/3.
