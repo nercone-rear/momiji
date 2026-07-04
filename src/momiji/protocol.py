@@ -776,6 +776,12 @@ class Protocol(asyncio.Protocol):
 
     async def send_response(self, request: Request, response: Response) -> bool:
         response.minify()
+
+        etag = response.etag
+        if request.headers.get("if-none-match") == str(etag):
+            response = Response(status_code=304, headers=Headers([]))
+        request.headers.set("ETag", str(etag))
+
         response.compress(request.headers.get("Accept-Encoding", ""))
 
         keep_alive = self.should_keep_alive(request)
