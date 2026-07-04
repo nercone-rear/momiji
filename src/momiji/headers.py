@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Optional, Union, TypeVar
 
+from .errors import HTTPViolationError
 from .constants import Characters
 
 T = TypeVar("T")
@@ -151,20 +152,20 @@ class Headers:
 
         for line in lines:
             if line[:1] in (" ", "\t"):
-                raise ValueError("obsolete line folding is not supported")
+                raise HTTPViolationError("obsolete line folding is not supported")
 
             if ":" not in line:
-                raise ValueError("malformed header line")
+                raise HTTPViolationError("malformed header line")
 
             name, _, raw_value = line.partition(":")
 
             if not is_valid_token(name):
-                raise ValueError(f"invalid header name: {name!r}")
+                raise HTTPViolationError(f"invalid header name: {name!r}")
 
             header_value = raw_value.strip(" \t")
 
             if any(c in FORBIDDEN_VALUE_CHARS for c in header_value):
-                raise ValueError(f"invalid character in header value: {header_value!r}")
+                raise HTTPViolationError(f"invalid character in header value: {header_value!r}")
 
             found = False
             for existing_name, values in raw:

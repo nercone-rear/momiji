@@ -2,6 +2,7 @@ import os
 import asyncio
 from email.utils import formatdate
 
+from .errors import HTTPViolationError
 from .models import Role, Request, Response
 from .headers import CommaHeader
 
@@ -15,17 +16,17 @@ async def finalize_request(request: Request, strict: bool = True):
         host_values = request.headers["Host"]
 
         if host_values is not None and len(host_values) > 1:
-            raise ValueError("multiple Host headers present")
+            raise HTTPViolationError("multiple Host headers present")
 
         if not request.headers.get("Host") and strict:
-            raise ValueError("missing Host header")
+            raise HTTPViolationError("missing Host header")
 
     has_transfer_encoding = "Transfer-Encoding" in request.headers
     has_content_length = "Content-Length" in request.headers
 
     if has_transfer_encoding and has_content_length:
         if strict:
-            raise ValueError("conflicting Transfer-Encoding and Content-Length headers")
+            raise HTTPViolationError("conflicting Transfer-Encoding and Content-Length headers")
 
         request.headers.remove("Content-Length")
 
@@ -33,12 +34,12 @@ async def finalize_request(request: Request, strict: bool = True):
         transfer_encoding = CommaHeader(request.headers.get("Transfer-Encoding", ""))
 
         if not transfer_encoding.raw or transfer_encoding.raw[-1].lower() != "chunked":
-            raise ValueError("Transfer-Encoding must end in chunked")
+            raise HTTPViolationError("Transfer-Encoding must end in chunked")
 
     content_length_values = request.headers["Content-Length"]
 
     if content_length_values and len(set(content_length_values)) > 1:
-        raise ValueError("conflicting Content-Length values")
+        raise HTTPViolationError("conflicting Content-Length values")
 
     if strict and request.trailers is not None:
         for name in [n for n, _ in request.trailers.raw]:

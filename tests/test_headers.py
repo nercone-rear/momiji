@@ -1,6 +1,7 @@
 import pytest
 
 from momiji.headers import Headers, CommaHeader, Link, AcceptEncoding, ContentType, ETag
+from momiji.errors import HTTPViolationError
 
 def test_headers_parse_build_round_trip():
     headers = Headers.parse("Content-Type: text/plain\r\nContent-Length: 5\r\n")
@@ -37,15 +38,15 @@ def test_headers_remove_and_contains():
     assert "X-Foo" not in headers
 
 def test_headers_obs_fold_rejected():
-    with pytest.raises(ValueError):
+    with pytest.raises(HTTPViolationError):
         Headers.parse("X-Foo: 1\r\n bar\r\n")
 
 def test_headers_malformed_line():
-    with pytest.raises(ValueError):
+    with pytest.raises(HTTPViolationError):
         Headers.parse("this has no colon\r\n")
 
 def test_headers_invalid_name():
-    with pytest.raises(ValueError):
+    with pytest.raises(HTTPViolationError):
         Headers.parse("X Foo: 1\r\n")
 
 def test_comma_header_round_trip():

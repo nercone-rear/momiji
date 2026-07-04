@@ -1,6 +1,8 @@
 import asyncio
 from typing import Optional
 
+from .errors import WebSocketProtocolError
+
 GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11"
 
 OPCODE_CONTINUATION = 0x0
@@ -11,12 +13,6 @@ OPCODE_PING = 0x9
 OPCODE_PONG = 0xA
 
 MAX_MESSAGE_SIZE = 100 * 1024 * 1024
-
-class WebSocketProtocolError(Exception):
-    def __init__(self, code: int, message: str = ""):
-        self.code = code
-        self.message = message
-        super().__init__(message)
 
 class WebSocket:
     def __init__(self, transport, feed: "asyncio.Queue", is_client: bool = False):

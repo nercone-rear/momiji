@@ -6,6 +6,7 @@ import base64
 import hashlib
 from typing import Optional, TYPE_CHECKING
 
+from .errors import HTTPViolationError, HTTPError, HTTPReportedViolationError
 from .models import Role, Request, Response
 from .headers import Headers, CommaHeader, AcceptEncoding
 from .finalizer import finalize_request, finalize_response, HOP_BY_HOP_HEADERS
@@ -25,12 +26,6 @@ REASON_PHRASES = {
     500: "Internal Server Error", 501: "Not Implemented", 502: "Bad Gateway", 503: "Service Unavailable", 504: "Gateway Timeout", 505: "HTTP Version Not Supported"
 }
 
-class BadRequest(Exception):
-    def __init__(self, status_code: int = 400, message: str = "Bad Request"):
-        self.status_code = status_code
-        self.message = message
-        super().__init__(message)
-
 def find_body_mode(headers: Headers, *, is_response: bool, status_code: Optional[int] = None) -> tuple[str, int]:
     if is_response and status_code is not None:
         if status_code in (204, 304) or (100 <= status_code < 200):
@@ -41,28 +36,28 @@ def find_body_mode(headers: Headers, *, is_response: bool, status_code: Optional
 
     if transfer_encoding_values is not None:
         if content_length_values is not None:
-            raise BadRequest(400, "Conflicting Transfer-Encoding and Content-Length")
+            raise HTTPReportedViolationError(400, "Conflicting Transfer-Encoding and Content-Length")
 
         tokens = CommaHeader(", ".join(transfer_encoding_values))
 
         if not tokens.raw or tokens.raw[-1].lower() != "chunked":
-            raise BadRequest(400, "Transfer-Encoding must end in chunked")
+            raise HTTPReportedViolationError(400, "Transfer-Encoding must end in chunked")
 
         return "chunked", 0
 
     if content_length_values is not None:
         if len(set(content_length_values)) > 1:
-            raise BadRequest(400, "Conflicting Content-Length values")
+            raise HTTPReportedViolationError(400, "Conflicting Content-Length values")
 
         cl_value = content_length_values[0]
 
         if not cl_value or not all(c in "0123456789" for c in cl_value):
-            raise BadRequest(400, "Invalid Content-Length")
+            raise HTTPReportedViolationError(400, "Invalid Content-Length")
 
         length = int(cl_value)
 
         if length < 0:
-            raise BadRequest(400, "Invalid Content-Length")
+            raise HTTPReportedViolationError(400, "Invalid Content-Length")
 
         return "length", length
 
@@ -86,7 +81,7 @@ class ChunkedDecoder:
 
                 if idx == -1:
                     if len(buffer) > 4096:
-                        raise BadRequest(400, "chunk size line too long")
+                        raise HTTPReportedViolationError(400, "chunk size line too long")
                     return False
 
                 line = bytes(buffer[:idx])
@@ -95,7 +90,7 @@ class ChunkedDecoder:
                 size_str = line.split(b";", 1)[0].strip()
 
                 if not size_str or not all(c in b"0123456789abcdefABCDEF" for c in size_str):
-                    raise BadRequest(400, "invalid chunk size")
+                    raise HTTPReportedViolationError(400, "invalid chunk size")
 
                 self.remaining = int(size_str, 16)
                 self.state = "trailer" if self.remaining == 0 else "data"
@@ -107,7 +102,7 @@ class ChunkedDecoder:
                 self.body.extend(buffer[:self.remaining])
 
                 if bytes(buffer[self.remaining:self.remaining + 2]) != b"\r\n":
-                    raise BadRequest(400, "malformed chunk terminator")
+                    raise HTTPReportedViolationError(400, "malformed chunk terminator")
 
                 del buffer[:self.remaining + 2]
                 self.state = "size"
@@ -125,7 +120,7 @@ class ChunkedDecoder:
 
                 if idx == -1:
                     if len(buffer) > MAX_HEADER_SIZE:
-                        raise BadRequest(400, "trailer section too large")
+                        raise HTTPReportedViolationError(400, "trailer section too large")
                     return False
 
                 self.trailer_buffer = bytes(buffer[:idx])
@@ -163,7 +158,7 @@ class MessageParser:
 
             if idx == -1:
                 if len(self.buffer) > MAX_HEADER_SIZE:
-                    raise BadRequest(431, "Request Header Fields Too Large")
+                    raise HTTPReportedViolationError(431, "Request Header Fields Too Large")
                 return None
 
             head = bytes(self.buffer[:idx])
@@ -196,7 +191,7 @@ class MessageParser:
                     return None
 
                 if self.content_length > MAX_BODY_SIZE:
-                    raise BadRequest(413, "Payload Too Large")
+                    raise HTTPReportedViolationError(413, "Payload Too Large")
 
                 self.body = bytearray(self.buffer[:self.content_length])
                 del self.buffer[:self.content_length]
@@ -206,7 +201,7 @@ class MessageParser:
                     return None
 
                 if len(self.chunked.body) > MAX_BODY_SIZE:
-                    raise BadRequest(413, "Payload Too Large")
+                    raise HTTPReportedViolationError(413, "Payload Too Large")
 
                 self.body = self.chunked.body
 
@@ -374,7 +369,7 @@ class Protocol(asyncio.Protocol):
                 if result is None:
                     break
                 self.request_queue.put_nowait(result)
-        except BadRequest as exc:
+        except HTTPError as exc:
             self.request_queue.put_nowait(exc)
 
     def eof_received(self) -> Optional[bool]:
@@ -408,7 +403,7 @@ class Protocol(asyncio.Protocol):
         while True:
             item = await self.request_queue.get()
 
-            if isinstance(item, BadRequest):
+            if isinstance(item, HTTPError):
                 await self.write_error_response(item)
                 self.transport.close()
                 return
@@ -417,12 +412,12 @@ class Protocol(asyncio.Protocol):
 
             try:
                 keep_alive = await self.handle_request(first_line, headers, body, trailers)
-            except BadRequest as exc:
+            except HTTPError as exc:
                 await self.write_error_response(exc)
                 self.transport.close()
                 return
             except Exception:
-                await self.write_error_response(BadRequest(500, "Internal Server Error"))
+                await self.write_error_response(HTTPError(500, "Internal Server Error"))
                 self.transport.close()
                 return
 
@@ -433,7 +428,7 @@ class Protocol(asyncio.Protocol):
                 self.transport.close()
                 return
 
-    async def write_error_response(self, exc: BadRequest):
+    async def write_error_response(self, exc: HTTPError):
         body = exc.message.encode()
         reason = REASON_PHRASES.get(exc.status_code, "Error")
         head = (
@@ -456,15 +451,15 @@ class Protocol(asyncio.Protocol):
         key = request.headers.get("Sec-WebSocket-Key")
 
         if version != "13" or not key:
-            raise BadRequest(426, "Upgrade Required")
+            raise HTTPReportedViolationError(426, "Upgrade Required")
 
         try:
             decoded_key = base64.b64decode(key)
         except Exception:
-            raise BadRequest(400, "Invalid Sec-WebSocket-Key")
+            raise HTTPReportedViolationError(400, "Invalid Sec-WebSocket-Key")
 
         if len(decoded_key) != 16:
-            raise BadRequest(400, "Invalid Sec-WebSocket-Key")
+            raise HTTPReportedViolationError(400, "Invalid Sec-WebSocket-Key")
 
         accept_key = base64.b64encode(hashlib.sha1((key + WEBSOCKET_GUID).encode("ascii")).digest()).decode("ascii")
 
@@ -486,15 +481,15 @@ class Protocol(asyncio.Protocol):
         parts = first_line.split(" ")
 
         if len(parts) != 3:
-            raise BadRequest(400, "Malformed request line")
+            raise HTTPReportedViolationError(400, "Malformed request line")
 
         method, target, version_token = parts
 
         if version_token not in ("HTTP/1.0", "HTTP/1.1"):
-            raise BadRequest(505, "HTTP Version Not Supported")
+            raise HTTPReportedViolationError(505, "HTTP Version Not Supported")
 
         if method not in ("GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH"):
-            raise BadRequest(501, "Not Implemented")
+            raise HTTPReportedViolationError(501, "Not Implemented")
 
         client_addr = self.client_addr or ("", 0)
 
@@ -510,16 +505,16 @@ class Protocol(asyncio.Protocol):
 
         try:
             await finalize_request(request, strict=True)
-        except ValueError as exc:
-            raise BadRequest(400, str(exc))
+        except HTTPViolationError as exc:
+            raise HTTPReportedViolationError(400, str(exc))
 
         if self.role == Role.TUNNEL:
             if method != "CONNECT":
-                raise BadRequest(400, "TUNNEL role only supports CONNECT")
+                raise HTTPReportedViolationError(400, "TUNNEL role only supports CONNECT")
             return await self.handle_connect(request)
 
         if method == "CONNECT":
-            raise BadRequest(405, "Method Not Allowed")
+            raise HTTPReportedViolationError(405, "Method Not Allowed")
 
         if self.role == Role.ORIGIN:
             if self.is_websocket_upgrade(request) and self.handler and self.handler.on_websocket:
@@ -542,7 +537,7 @@ class Protocol(asyncio.Protocol):
             target = (request.url.host, request.url.port or 80)
 
         if not target or not target[0]:
-            raise BadRequest(400, "Cannot determine upstream target")
+            raise HTTPReportedViolationError(400, "Cannot determine upstream target")
 
         connection = Connection(src=self.src, dst=target)
 
@@ -612,7 +607,7 @@ class Protocol(asyncio.Protocol):
         try:
             port = int(port_str)
         except ValueError:
-            raise BadRequest(400, "Invalid CONNECT target")
+            raise HTTPReportedViolationError(400, "Invalid CONNECT target")
 
         connection = Connection(src=self.src, dst=(host, port))
 

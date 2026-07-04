@@ -1,7 +1,7 @@
 import re
 import pytest
 
-from momiji import Role, Request, Response, Headers, finalize_request, finalize_response
+from momiji import Role, Request, Response, Headers, finalize_request, finalize_response, HTTPViolationError
 
 async def test_finalize_request_ok_with_host():
     request = Request(method="GET", target="/", headers=Headers([("Host", ["example.com"])]))
@@ -10,7 +10,7 @@ async def test_finalize_request_ok_with_host():
 async def test_finalize_request_missing_host_strict_raises():
     request = Request(method="GET", target="/", headers=Headers({}))
 
-    with pytest.raises(ValueError):
+    with pytest.raises(HTTPViolationError):
         await finalize_request(request, strict=True)
 
 async def test_finalize_request_missing_host_lenient_ok():
@@ -25,7 +25,7 @@ async def test_finalize_request_conflicting_framing():
     ])
     request = Request(method="POST", target="/", headers=headers)
 
-    with pytest.raises(ValueError):
+    with pytest.raises(HTTPViolationError):
         await finalize_request(request, strict=True)
 
     request.headers.set("Content-Length", "5")
