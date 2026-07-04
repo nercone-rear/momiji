@@ -27,7 +27,7 @@ class Role(Enum):
 class Message:
     client: tuple[ipaddress.IPv4Address | ipaddress.IPv6Address, int] = field(default_factory=lambda: (ipaddress.IPv4Address("0.0.0.0"), 0))
 
-    protocol: Literal["HTTP/1.0", "HTTP/1.1", "HTTP/2.0", "HTTP/3.0"] = "HTTP/1.1"
+    protocol: Literal["HTTP/1.0", "HTTP/1.1"] = "HTTP/1.1"
 
     headers: Headers = field(default_factory=lambda: Headers({}))
     trailers: Optional[Headers] = None
