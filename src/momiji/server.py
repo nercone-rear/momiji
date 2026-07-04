@@ -179,13 +179,6 @@ class Server:
             for server in servers:
                 server.close()
 
-            # Server.serve_forever(), once cancelled, waits on Server.wait_closed() internally,
-            # which in turn blocks until all active connections are gone. drain() must run first
-            # to actually close them, or cancelling/awaiting serve_forever_task below deadlocks.
-            #
-            # server.close() alone is not enough to unblock serve_forever_task: asyncio's Server
-            # cancels its own internal serve_forever future as part of close(), but uvloop's Server
-            # does not, so serve_forever_task must be cancelled explicitly to work on both loops.
             await self.drain()
 
             serve_forever_task.cancel()
