@@ -77,21 +77,20 @@ class Message:
                 else:
                     continue
 
-            content_encoding.append(encoding)
-            self.compressed = True
+                content_encoding.append(encoding)
+                self.compressed = True
+
+            self.headers.set("Content-Encoding", str(content_encoding))
 
         elif isinstance(self.body, os.PathLike):
             filepath = self.body
             filesize = os.stat(filepath).st_size
 
-            if filesize <= max_offload_filesize:
+            if 0 < filesize <= max_offload_filesize:
                 with open(filepath, "rb") as f:
                     self.body = f.read()
 
-                self.compress()
-                return
-
-        self.headers.set("Content-Encoding", str(content_encoding))
+                self.compress(encodings, max_offload_filesize=max_offload_filesize)
 
     def decompress(self, *, max_offload_filesize: int = 32768):
         if not (self.compression and self.compressed and self.body is not None):
@@ -122,12 +121,11 @@ class Message:
             filepath = self.body
             filesize = os.stat(filepath).st_size
 
-            if filesize <= max_offload_filesize:
+            if 0 < filesize <= max_offload_filesize:
                 with open(filepath, "rb") as f:
                     self.body = f.read()
 
                 self.decompress()
-                return
 
     def minify(self, *, max_offload_filesize: int = 32768):
         if not (self.minification and not self.minified and self.body is not None):
@@ -166,12 +164,11 @@ class Message:
             filepath = self.body
             filesize = os.stat(filepath).st_size
 
-            if filesize <= max_offload_filesize:
+            if 0 < filesize <= max_offload_filesize:
                 with open(filepath, "rb") as f:
                     self.body = f.read()
 
                 self.minify()
-                return
 
 @dataclass
 class Request(Message):
