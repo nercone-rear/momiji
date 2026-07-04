@@ -11,6 +11,7 @@ from .models import Role, Request, Response
 from .headers import Headers, CommaHeader, AcceptEncoding
 from .finalizer import finalize_request, finalize_response, HOP_BY_HOP_HEADERS
 from .websocket import WebSocket, GUID as WEBSOCKET_GUID
+from .limits import ConnectionTracker, RateLimiter
 
 if TYPE_CHECKING:
     from .server import Handler
@@ -19,11 +20,11 @@ MAX_HEADER_SIZE = 64 * 1024
 MAX_BODY_SIZE = 100 * 1024 * 1024
 
 REASON_PHRASES = {
-    100: "Continue", 101: "Switching Protocols",
-    200: "OK", 201: "Created", 202: "Accepted", 204: "No Content", 206: "Partial Content",
-    301: "Moved Permanently", 302: "Found", 303: "See Other", 304: "Not Modified", 307: "Temporary Redirect", 308: "Permanent Redirect",
-    400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found", 405: "Method Not Allowed", 406: "Not Acceptable", 409: "Conflict", 410: "Gone", 411: "Length Required", 412: "Precondition Failed", 413: "Payload Too Large", 414: "URI Too Long", 415: "Unsupported Media Type", 416: "Range Not Satisfiable", 417: "Expectation Failed", 426: "Upgrade Required", 429: "Too Many Requests", 431: "Request Header Fields Too Large",
-    500: "Internal Server Error", 501: "Not Implemented", 502: "Bad Gateway", 503: "Service Unavailable", 504: "Gateway Timeout", 505: "HTTP Version Not Supported"
+    100: "Continue", 101: "Switching Protocols", 102: "Processing", 103: "Early Hints",
+    200: "OK", 201: "Created", 202: "Accepted", 103: "Non-Authoritative Information", 204: "No Content", 205: "Reset Content", 206: "Partial Content", 207: "Multi-Status", 208: "Already Reported", 226: "IM Used",
+    300: "Multiple Choices", 301: "Moved Permanently", 302: "Found", 303: "See Other", 304: "Not Modified", 307: "Temporary Redirect", 308: "Permanent Redirect",
+    400: "Bad Request", 401: "Unauthorized", 402: "Payment Required", 403: "Forbidden", 404: "Not Found", 405: "Method Not Allowed", 406: "Not Acceptable", 407: "Proxy Authentication Required", 408: "Request Timeout", 409: "Conflict", 410: "Gone", 411: "Length Required", 412: "Precondition Failed", 413: "Payload Too Large", 414: "URI Too Long", 415: "Unsupported Media Type", 416: "Range Not Satisfiable", 417: "Expectation Failed", 418: "I'm a teapot", 421: "Misdirected Request", 422: "Unprocessable Content", 423: "Locked", 424: "Failed Dependency", 425: "Too Early", 426: "Upgrade Required", 428: "Precondition Required", 429: "Too Many Requests", 431: "Request Header Fields Too Large", 451: "Unavailable For Legal Reasons",
+    500: "Internal Server Error", 501: "Not Implemented", 502: "Bad Gateway", 503: "Service Unavailable", 504: "Gateway Timeout", 505: "HTTP Version Not Supported", 506: "Variant Also Negotiates", 507: "Insufficient Storage", 508: "Loop Detected", 510: "Not Extended", 511: "Network Authentication Required"
 }
 
 def find_body_mode(headers: Headers, *, is_response: bool, status_code: Optional[int] = None) -> tuple[str, int]:
@@ -308,12 +309,16 @@ class Connection:
         return data
 
 class Protocol(asyncio.Protocol):
-    def __init__(self, src: Optional[tuple[str, int]] = None, handler: Optional["Handler"] = None, role: Role = Role.ORIGIN, upstream: Optional[tuple[str, int]] = None):
+    def __init__(self, src: Optional[tuple[str, int]] = None, handler: Optional["Handler"] = None, role: Role = Role.ORIGIN, upstream: Optional[tuple[str, int]] = None, tracker: Optional[ConnectionTracker] = None, rate_limiter: Optional[RateLimiter] = None, idle_timeout: Optional[float] = None, request_timeout: Optional[float] = None):
         self.src = src
         self.handler = handler
         self.role = role
         self.upstream = upstream
         self.connections: dict[tuple[str, int], Connection] = {}
+        self.tracker = tracker
+        self.rate_limiter = rate_limiter
+        self.idle_timeout = idle_timeout
+        self.request_timeout = request_timeout
 
         self.transport: Optional[asyncio.Transport] = None
         self.parser = MessageParser(is_response=False)
@@ -329,19 +334,68 @@ class Protocol(asyncio.Protocol):
         self.resume_event.set()
         self.tasks: set[asyncio.Task] = set()
 
+        self.handling_request = False
+        self.request_in_progress = False
+        self.idle_timer: Optional[asyncio.TimerHandle] = None
+        self.request_timer: Optional[asyncio.TimerHandle] = None
+
     def track(self, coro) -> asyncio.Task:
         task = asyncio.create_task(coro)
         self.tasks.add(task)
         task.add_done_callback(self.tasks.discard)
         return task
 
+    def start_idle_timer(self):
+        self.cancel_idle_timer()
+
+        if self.idle_timeout is not None:
+            loop = asyncio.get_running_loop()
+            self.idle_timer = loop.call_later(self.idle_timeout, self.transport.close)
+
+    def cancel_idle_timer(self):
+        if self.idle_timer is not None:
+            self.idle_timer.cancel()
+            self.idle_timer = None
+
+    def start_request_timer(self):
+        self.cancel_request_timer()
+
+        if self.request_timeout is not None:
+            loop = asyncio.get_running_loop()
+            self.request_timer = loop.call_later(self.request_timeout, self.on_request_timeout)
+
+    def cancel_request_timer(self):
+        if self.request_timer is not None:
+            self.request_timer.cancel()
+            self.request_timer = None
+
+    def on_request_timeout(self):
+        self.track(self.send_request_timeout())
+
+    async def send_request_timeout(self):
+        try:
+            await self.write_error_response(HTTPError(408, "Request Timeout"))
+        except Exception:
+            pass
+
+        self.transport.close()
+
     def connection_made(self, transport: asyncio.BaseTransport):
+        if self.tracker is not None and not self.tracker.try_acquire(self):
+            try:
+                transport.write(b"HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n")
+            except Exception:
+                pass
+            transport.close()
+            return
+
         self.transport = transport
         self.client_addr = transport.get_extra_info("peername")
 
         if self.src is None:
             self.src = self.client_addr
 
+        self.start_idle_timer()
         self.worker_task = self.track(self.worker())
 
     def pause_writing(self):
@@ -363,13 +417,26 @@ class Protocol(asyncio.Protocol):
 
         self.parser.feed(data)
 
+        if not self.request_in_progress and len(self.parser.buffer) > 0:
+            self.request_in_progress = True
+            self.cancel_idle_timer()
+            self.start_request_timer()
+
         try:
             while True:
                 result = self.parser.try_parse()
                 if result is None:
                     break
+
+                self.request_in_progress = False
+                self.cancel_request_timer()
                 self.request_queue.put_nowait(result)
+
+                if len(self.parser.buffer) > 0:
+                    self.request_in_progress = True
+                    self.start_request_timer()
         except HTTPError as exc:
+            self.cancel_request_timer()
             self.request_queue.put_nowait(exc)
 
     def eof_received(self) -> Optional[bool]:
@@ -385,6 +452,12 @@ class Protocol(asyncio.Protocol):
             await self.upstream_connection.close(half_close=True)
 
     def connection_lost(self, exc: Optional[Exception]):
+        self.cancel_idle_timer()
+        self.cancel_request_timer()
+
+        if self.tracker is not None:
+            self.tracker.release(self)
+
         if self.worker_task is not None:
             self.worker_task.cancel()
 
@@ -402,9 +475,15 @@ class Protocol(asyncio.Protocol):
     async def worker(self):
         while True:
             item = await self.request_queue.get()
+            self.handling_request = True
 
             if isinstance(item, HTTPError):
                 await self.write_error_response(item)
+                self.transport.close()
+                return
+
+            if self.rate_limiter is not None and self.client_addr is not None and not self.rate_limiter.allow(self.client_addr[0]):
+                await self.write_error_response(HTTPError(429, "Too Many Requests"))
                 self.transport.close()
                 return
 
@@ -427,6 +506,11 @@ class Protocol(asyncio.Protocol):
             if not keep_alive:
                 self.transport.close()
                 return
+
+            self.handling_request = False
+
+            if not self.request_in_progress:
+                self.start_idle_timer()
 
     async def write_error_response(self, exc: HTTPError):
         body = exc.message.encode()
@@ -656,6 +740,9 @@ class Protocol(asyncio.Protocol):
         return True
 
     def should_keep_alive(self, request: Request) -> bool:
+        if self.tracker is not None and self.tracker.shutting_down:
+            return False
+
         connection_tokens = CommaHeader(request.headers.get("Connection", ""))
         request_wants_close = any(t.lower() == "close" for t in connection_tokens.raw)
         request_wants_keep_alive = any(t.lower() == "keep-alive" for t in connection_tokens.raw)
