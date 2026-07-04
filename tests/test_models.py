@@ -76,12 +76,17 @@ class TestCompress:
         assert not m.compressed
         assert m.headers.get("Content-Encoding") == ""
 
-    def test_non_bytes_body_still_sets_content_encoding(self):
+    def test_non_bytes_body_left_untouched_without_content_encoding(self):
+        # Content-Encoding must only be advertised when the bytes actually sent
+        # were transformed accordingly (RFC 9110 §8.4). A plain str body isn't
+        # os.PathLike, so it is never read/offloaded here, and no encoding is
+        # applied to it — asserting Content-Encoding in this case would make
+        # the header lie about the representation actually transmitted.
         m = Message(body="/some/path", headers=Headers([]))
         m.compress(["gzip"])
         assert m.body == "/some/path"
-        assert m.headers.get("Content-Encoding") == "gzip"
-        assert m.compressed
+        assert m.headers.get("Content-Encoding") is None
+        assert not m.compressed
 
     def test_multiple_encodings_applied_in_order(self):
         m = Message(body=b"hello world", headers=Headers([]))
