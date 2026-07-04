@@ -18,7 +18,7 @@ async def finalize_request(request: Request, strict: bool = True):
         if host_values is not None and len(host_values) > 1:
             raise HTTPViolationError("multiple Host headers present")
 
-        if not request.headers.get("Host") and strict:
+        if strict and not request.headers.get("Host"):
             raise HTTPViolationError("missing Host header")
 
     has_transfer_encoding = "Transfer-Encoding" in request.headers
@@ -58,10 +58,7 @@ async def finalize_response(response: Response, strict: bool = True, role: Role 
 
     response.minify()
 
-    status = response.status_code
-    no_body_status = status in (204, 304) or (100 <= status < 200)
-
-    if no_body_status:
+    if response.status_code in (204, 304) or (100 <= response.status_code < 200):
         response.headers.remove("Content-Length")
         response.headers.remove("Transfer-Encoding")
 
@@ -71,8 +68,7 @@ async def finalize_response(response: Response, strict: bool = True, role: Role 
 
     elif isinstance(response.body, (os.PathLike, str)):
         path = response.body if isinstance(response.body, str) else os.fspath(response.body)
-        stat_result = await asyncio.to_thread(os.stat, path)
-        file_size = stat_result.st_size
+        file_size = (await asyncio.to_thread(os.stat, path)).st_size
 
         if response.minification and file_size <= MAX_INLINE_FILE_SIZE:
             with open(path, "rb") as f:
