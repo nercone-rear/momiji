@@ -79,7 +79,7 @@ class Message:
             content_encoding.append(encoding)
             self.compressed = True
 
-        self.headers.set(str(content_encoding))
+        self.headers.set("Content-Encoding", str(content_encoding))
 
     def decompress(self):
         if not (self.compression and self.compressed and self.body is not None):
@@ -87,9 +87,23 @@ class Message:
 
         content_encoding = CommaHeader(self.headers.get("Content-Encoding", ""))
 
-        for encoding in content_encoding:
-            ...
+        for encoding in reversed(content_encoding.raw):
+            if self.has_real_body:
+                if encoding == "zstd":
+                    self.body = zstandard.ZstdDecompressor().decompress(self.body)
+                elif encoding == "br":
+                    self.body = brotlicffi.decompress(self.body)
+                elif encoding == "gzip":
+                    self.body = gzip.decompress(self.body)
+                elif encoding == "deflate":
+                    try:
+                        self.body = zlib.decompress(self.body)
+                    except zlib.error:
+                        self.body = zlib.decompress(self.body, -zlib.MAX_WBITS)
+                else:
+                    break
 
+            self.headers.remove("Content-Encoding")
             self.compressed = False
 
     def minify(self):

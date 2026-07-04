@@ -28,5 +28,11 @@ classifiers = [
     "Operating System :: MacOS"
 ]
 
+[dependency-groups]
+dev = ["pytest", "pytest-asyncio"]
+
 [tool.uv.build-backend]
 module-name = "momiji"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
