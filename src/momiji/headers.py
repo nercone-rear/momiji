@@ -6,7 +6,8 @@ from .constants import Characters
 
 T = TypeVar("T")
 
-TOKEN_CHARS = set("!#$%&'*+-.^_`|~") | Characters.DIGIT | Characters.LOWER | Characters.UPPER
+TOKEN_CHARS = frozenset("!#$%&'*+-.^_`|~") | Characters.DIGIT | Characters.LOWER | Characters.UPPER
+FORBIDDEN_VALUE_CHARS = {chr(c) for c in range(0x20) if c != 0x09} | {chr(0x7F)}
 
 def is_valid_token(s: str) -> bool:
     return len(s) > 0 and all(c in TOKEN_CHARS for c in s)
@@ -161,6 +162,9 @@ class Headers:
                 raise ValueError(f"invalid header name: {name!r}")
 
             header_value = raw_value.strip(" \t")
+
+            if any(c in FORBIDDEN_VALUE_CHARS for c in header_value):
+                raise ValueError(f"invalid character in header value: {header_value!r}")
 
             found = False
             for existing_name, values in raw:

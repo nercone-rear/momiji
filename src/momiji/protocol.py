@@ -22,7 +22,7 @@ REASON_PHRASES = {
     200: "OK", 201: "Created", 202: "Accepted", 204: "No Content", 206: "Partial Content",
     301: "Moved Permanently", 302: "Found", 303: "See Other", 304: "Not Modified", 307: "Temporary Redirect", 308: "Permanent Redirect",
     400: "Bad Request", 401: "Unauthorized", 403: "Forbidden", 404: "Not Found", 405: "Method Not Allowed", 406: "Not Acceptable", 409: "Conflict", 410: "Gone", 411: "Length Required", 412: "Precondition Failed", 413: "Payload Too Large", 414: "URI Too Long", 415: "Unsupported Media Type", 416: "Range Not Satisfiable", 417: "Expectation Failed", 426: "Upgrade Required", 429: "Too Many Requests", 431: "Request Header Fields Too Large",
-    500: "Internal Server Error", 501: "Not Implemented", 502: "Bad Gateway", 503: "Service Unavailable", 504: "Gateway Timeout"
+    500: "Internal Server Error", 501: "Not Implemented", 502: "Bad Gateway", 503: "Service Unavailable", 504: "Gateway Timeout", 505: "HTTP Version Not Supported"
 }
 
 class BadRequest(Exception):
@@ -54,10 +54,12 @@ def find_body_mode(headers: Headers, *, is_response: bool, status_code: Optional
         if len(set(content_length_values)) > 1:
             raise BadRequest(400, "Conflicting Content-Length values")
 
-        try:
-            length = int(content_length_values[0])
-        except ValueError:
+        cl_value = content_length_values[0]
+
+        if not cl_value or not all(c in "0123456789" for c in cl_value):
             raise BadRequest(400, "Invalid Content-Length")
+
+        length = int(cl_value)
 
         if length < 0:
             raise BadRequest(400, "Invalid Content-Length")
@@ -489,7 +491,7 @@ class Protocol(asyncio.Protocol):
         method, target, version_token = parts
 
         if version_token not in ("HTTP/1.0", "HTTP/1.1"):
-            raise BadRequest(400, "Unsupported HTTP version")
+            raise BadRequest(505, "HTTP Version Not Supported")
 
         if method not in ("GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH"):
             raise BadRequest(501, "Not Implemented")
@@ -507,7 +509,7 @@ class Protocol(asyncio.Protocol):
         )
 
         try:
-            await finalize_request(request, strict=False)
+            await finalize_request(request, strict=True)
         except ValueError as exc:
             raise BadRequest(400, str(exc))
 
@@ -550,6 +552,11 @@ class Protocol(asyncio.Protocol):
             return Response(status_code=502, body=b"Bad Gateway", headers=Headers({}))
 
         try:
+            connection_header = CommaHeader(request.headers.get("Connection", ""))
+
+            for extra in list(connection_header.raw):
+                request.headers.remove(extra)
+
             for name in list(HOP_BY_HOP_HEADERS):
                 request.headers.remove(name)
 

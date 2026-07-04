@@ -90,6 +90,9 @@ class WebSocket:
         if payload_len > MAX_MESSAGE_SIZE:
             raise WebSocketProtocolError(1009, "message too large")
 
+        if opcode in (OPCODE_CLOSE, OPCODE_PING, OPCODE_PONG) and payload_len > 125:
+            raise WebSocketProtocolError(1002, "control frame payload too large")
+
         if len(buffer) < offset + 4:
             return None
 

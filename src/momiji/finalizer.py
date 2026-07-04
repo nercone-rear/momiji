@@ -10,7 +10,7 @@ FORBIDDEN_TRAILERS = frozenset({"transfer-encoding", "content-length", "host"})
 
 MAX_INLINE_FILE_SIZE = 10 * 1024 * 1024
 
-async def finalize_request(request: Request, strict: bool = False):
+async def finalize_request(request: Request, strict: bool = True):
     if request.protocol == "HTTP/1.1":
         host_values = request.headers["Host"]
 
@@ -45,7 +45,7 @@ async def finalize_request(request: Request, strict: bool = False):
             if name.lower() in FORBIDDEN_TRAILERS:
                 request.trailers.remove(name)
 
-async def finalize_response(response: Response, strict: bool = False, role: Role = Role.ORIGIN):
+async def finalize_response(response: Response, strict: bool = True, role: Role = Role.ORIGIN):
     if role != Role.ORIGIN:
         connection_header = CommaHeader(response.headers.get("Connection", ""))
 
@@ -86,10 +86,17 @@ async def finalize_response(response: Response, strict: bool = False, role: Role
 
             if response.range is not None:
                 start, end = response.range
-                end = min(end, file_size - 1)
-                response.status_code = 206
-                response.headers.set("Content-Range", f"bytes {start}-{end}/{file_size}")
-                response.headers.set("Content-Length", str(end - start + 1))
+
+                if start < 0 or start > end or start >= file_size:
+                    response.status_code = 416
+                    response.body = None
+                    response.headers.set("Content-Range", f"bytes */{file_size}")
+                    response.headers.set("Content-Length", "0")
+                else:
+                    end = min(end, file_size - 1)
+                    response.status_code = 206
+                    response.headers.set("Content-Range", f"bytes {start}-{end}/{file_size}")
+                    response.headers.set("Content-Length", str(end - start + 1))
             else:
                 response.headers.set("Content-Length", str(file_size))
 
