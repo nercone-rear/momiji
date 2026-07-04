@@ -57,6 +57,7 @@ jobs:
         run: uv run pytest --tb=short -v
 
   update:
+    needs: [test-macos, test-linux]
     runs-on: ubuntu-latest
     if: "!github.event.release.prerelease"
     permissions:
@@ -88,7 +89,7 @@ jobs:
           fi
 
   build:
-    needs: [test-macos, test-linux]
+    needs: update
     runs-on: ubuntu-latest
 
     steps:
