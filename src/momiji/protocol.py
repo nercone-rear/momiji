@@ -162,13 +162,19 @@ class MessageParser:
                     raise HTTPError(431, "Request Header Fields Too Large")
                 return None
 
+            if idx > MAX_HEADER_SIZE:
+                raise HTTPError(431, "Request Header Fields Too Large")
+
             head = bytes(self.buffer[:idx])
             del self.buffer[:idx + 4]
 
             text = head.decode("latin-1")
             line, _, rest = text.partition("\r\n")
             self.first_line = line
-            self.headers = Headers.parse(rest) if rest else Headers([])
+            try:
+                self.headers = Headers.parse(rest) if rest else Headers([])
+            except HTTPViolationError as exc:
+                raise HTTPReportedViolationError(400, str(exc))
 
             status_code = None
             if self.is_response:
@@ -207,7 +213,10 @@ class MessageParser:
                 self.body = self.chunked.body
 
                 if self.chunked.trailer_buffer:
-                    self.trailers = Headers.parse(self.chunked.trailer_buffer.decode("latin-1") + "\r\n")
+                    try:
+                        self.trailers = Headers.parse(self.chunked.trailer_buffer.decode("latin-1") + "\r\n")
+                    except HTTPViolationError as exc:
+                        raise HTTPReportedViolationError(400, str(exc))
 
             elif self.body_mode == "close":
                 if not self.closed_eof:
