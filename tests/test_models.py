@@ -104,7 +104,7 @@ class TestCompress:
 class TestDecompress:
     def test_gzip_round_trip(self):
         original = b"hello world"
-        m = Message(body=gzip.compress_with(original), headers=Headers([("Content-Encoding", ["gzip"])]), compressed=True)
+        m = Message(body=gzip.compress(original), headers=Headers([("Content-Encoding", ["gzip"])]), compressed=True)
         m.decompress()
         assert m.body == original
         assert not m.compressed
@@ -112,35 +112,35 @@ class TestDecompress:
 
     def test_deflate_zlib_wrapped(self):
         original = b"hello world"
-        m = Message(body=zlib.compress_with(original), headers=Headers([("Content-Encoding", ["deflate"])]), compressed=True)
+        m = Message(body=zlib.compress(original), headers=Headers([("Content-Encoding", ["deflate"])]), compressed=True)
         m.decompress()
         assert m.body == original
 
     def test_deflate_raw(self):
         original = b"hello world"
         compressor = zlib.compressobj(level=6, wbits=-zlib.MAX_WBITS)
-        raw = compressor.compress_with(original) + compressor.flush()
+        raw = compressor.compress(original) + compressor.flush()
         m = Message(body=raw, headers=Headers([("Content-Encoding", ["deflate"])]), compressed=True)
         m.decompress()
         assert m.body == original
 
     def test_brotli_round_trip(self):
         original = b"hello world"
-        m = Message(body=brotlicffi.compress_with(original), headers=Headers([("Content-Encoding", ["br"])]), compressed=True)
+        m = Message(body=brotlicffi.compress(original), headers=Headers([("Content-Encoding", ["br"])]), compressed=True)
         m.decompress()
         assert m.body == original
 
     def test_zstd_round_trip(self):
         original = b"hello world"
-        compressed = zstandard.ZstdCompressor().compress_with(original)
+        compressed = zstandard.ZstdCompressor().compress(original)
         m = Message(body=compressed, headers=Headers([("Content-Encoding", ["zstd"])]), compressed=True)
         m.decompress()
         assert m.body == original
 
     def test_multiple_encodings_reversed_on_decode(self):
         original = b"hello world"
-        step1 = gzip.compress_with(original)
-        step2 = brotlicffi.compress_with(step1)
+        step1 = gzip.compress(original)
+        step2 = brotlicffi.compress(step1)
         m = Message(body=step2, headers=Headers([("Content-Encoding", ["gzip", "br"])]), compressed=True)
         m.decompress()
         assert m.body == original
