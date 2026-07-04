@@ -5,7 +5,7 @@ import brotlicffi
 import zstandard
 
 from momiji.models import Message, Request, Response
-from momiji.headers import Headers
+from momiji.headers import Headers, Cookie
 
 
 class TestMessageText:
@@ -209,6 +209,16 @@ class TestRequest:
         req = Request(method="GET", target="/foo", headers=Headers([]))
         assert req.url.host == ""
 
+    def test_cookies_parsed_from_header(self):
+        req = Request(method="GET", target="/foo", headers=Headers([("Cookie", ["a=1; b=2"])]))
+        assert isinstance(req.cookies, Cookie)
+        assert req.cookies.get("a") == "1"
+        assert req.cookies.get("b") == "2"
+
+    def test_cookies_empty_when_header_missing(self):
+        req = Request(method="GET", target="/foo", headers=Headers([]))
+        assert len(req.cookies) == 0
+
 
 class TestIsWebsocketUpgrade:
     def _req(self, *, upgrade="websocket", connection="Upgrade", method="GET"):
@@ -241,3 +251,27 @@ class TestResponse:
     def test_custom_status_code(self):
         resp = Response(status_code=404)
         assert resp.status_code == 404
+
+    def test_set_cookie_appends_header(self):
+        resp = Response()
+        resp.set_cookie("a", "1")
+        assert resp.headers.get("Set-Cookie") == "a=1; Path=/"
+
+    def test_set_cookie_with_attributes(self):
+        resp = Response()
+        resp.set_cookie("a", "1", secure=True, httponly=True, samesite="Lax")
+        value = resp.headers.get("Set-Cookie")
+        assert "Secure" in value
+        assert "HttpOnly" in value
+        assert "SameSite=Lax" in value
+
+    def test_set_cookie_can_be_called_multiple_times(self):
+        resp = Response()
+        resp.set_cookie("a", "1")
+        resp.set_cookie("b", "2")
+        assert resp.headers["Set-Cookie"] == ["a=1; Path=/", "b=2; Path=/"]
+
+    def test_delete_cookie_sets_max_age_zero(self):
+        resp = Response()
+        resp.delete_cookie("a")
+        assert "Max-Age=0" in resp.headers.get("Set-Cookie")

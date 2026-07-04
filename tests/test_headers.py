@@ -2,7 +2,7 @@ import pytest
 
 from momiji.errors import HTTPViolationError
 from momiji.headers import (
-    Headers, CommaHeader, Link, AcceptEncoding, ContentType, ETag,
+    Headers, CommaHeader, Link, AcceptEncoding, ContentType, ETag, Cookie, SetCookie,
     is_valid_token, quote, unquote, split_unquoted,
 )
 
@@ -380,6 +380,88 @@ class TestETag:
 
     def test_str_returns_raw_value(self):
         assert str(ETag('"abc"')) == '"abc"'
+
+class TestCookie:
+    def test_parses_single_pair(self):
+        c = Cookie("a=1")
+        assert c.get("a") == "1"
+
+    def test_parses_multiple_pairs(self):
+        c = Cookie("a=1; b=2; c=3")
+        assert c.get("a") == "1"
+        assert c.get("b") == "2"
+        assert c.get("c") == "3"
+
+    def test_missing_key_returns_default(self):
+        c = Cookie("a=1")
+        assert c.get("missing") is None
+        assert c.get("missing", "fallback") == "fallback"
+
+    def test_empty_string_yields_no_cookies(self):
+        c = Cookie("")
+        assert len(c) == 0
+
+    def test_ignores_malformed_pairs(self):
+        c = Cookie("a=1; malformed; b=2")
+        assert c.get("a") == "1"
+        assert c.get("b") == "2"
+        assert len(c) == 2
+
+    def test_strips_dquote_wrapped_value(self):
+        c = Cookie('a="quoted value"')
+        assert c.get("a") == "quoted value"
+
+    def test_percent_decodes_value(self):
+        c = Cookie("a=hello%20world")
+        assert c.get("a") == "hello world"
+
+    def test_contains_and_iter(self):
+        c = Cookie("a=1; b=2")
+        assert "a" in c
+        assert "missing" not in c
+        assert set(c) == {"a", "b"}
+
+    def test_build_round_trips(self):
+        c = Cookie({"a": "1", "b": "hello world"})
+        rebuilt = Cookie(c.build())
+        assert rebuilt.get("a") == "1"
+        assert rebuilt.get("b") == "hello world"
+
+    def test_build_percent_encodes_unsafe_characters(self):
+        c = Cookie({"a": "hello world;with,unsafe\"chars"})
+        built = c.build()
+        assert ";" not in built.split("=", 1)[1]
+        assert "," not in built.split("=", 1)[1]
+
+class TestSetCookie:
+    def test_minimal_build(self):
+        assert str(SetCookie("a", "1")) == "a=1"
+
+    def test_build_includes_all_attributes(self):
+        s = SetCookie("a", "1", expires="Wed, 21 Oct 2026 07:28:00 GMT", max_age=3600, domain="example.com", path="/x", secure=True, httponly=True, samesite="Lax")
+        built = str(s)
+        assert built.startswith("a=1; ")
+        assert "Expires=Wed, 21 Oct 2026 07:28:00 GMT" in built
+        assert "Max-Age=3600" in built
+        assert "Domain=example.com" in built
+        assert "Path=/x" in built
+        assert "Secure" in built
+        assert "HttpOnly" in built
+        assert "SameSite=Lax" in built
+
+    def test_omits_unset_attributes(self):
+        built = str(SetCookie("a", "1"))
+        assert "Secure" not in built
+        assert "HttpOnly" not in built
+        assert "SameSite" not in built
+        assert "Path" not in built
+
+    def test_percent_encodes_unsafe_value(self):
+        built = str(SetCookie("a", "hello world;danger"))
+        value_part = built.split("=", 1)[1]
+        assert ";" not in value_part
+        assert " " not in value_part
+        assert Cookie(built).get("a") == "hello world;danger"
 
     def test_construct_from_another_etag_copies_state(self):
         a = ETag('W/"abc"')

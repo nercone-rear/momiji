@@ -1,11 +1,21 @@
 from __future__ import annotations
 
-from typing import Optional, Union, TypeVar
+from typing import Optional, Union, Literal, TypeVar
+from urllib.parse import quote as percent_quote, unquote as percent_unquote
 
 from .errors import HTTPViolationError
 from .constants import Characters
 
 T = TypeVar("T")
+
+# RFC 6265 4.1.1: cookie-octet, excluding '%' (reserved as our own percent-encoding marker)
+COOKIE_SAFE_CHARS = "".join(chr(c) for c in range(0x21, 0x7F) if c not in (0x22, 0x25, 0x2C, 0x3B, 0x5C))
+
+def cookie_quote(value: str) -> str:
+    return percent_quote(value, safe=COOKIE_SAFE_CHARS)
+
+def cookie_unquote(value: str) -> str:
+    return percent_unquote(value)
 
 TOKEN_CHARS = frozenset("!#$%&'*+-.^_`|~") | Characters.DIGIT | Characters.LOWER | Characters.UPPER
 FORBIDDEN_VALUE_CHARS = {chr(c) for c in range(0x20) if c != 0x09} | {chr(0x7F)}
@@ -404,3 +414,95 @@ class ETag:
 
     def weak_match(self, other: str | "ETag") -> bool:
         return self.opaque_tag == ETag(other).opaque_tag
+
+class Cookie:
+    def __init__(self, value: str | dict[str, str]):
+        if isinstance(value, (str, bytes)):
+            self.raw = Cookie.parse(value).raw
+        elif isinstance(value, dict):
+            self.raw = value
+        else:
+            self.raw = {}
+
+    def __str__(self) -> str:
+        return self.build()
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.raw
+
+    def __iter__(self):
+        return iter(self.raw)
+
+    def __len__(self) -> int:
+        return len(self.raw)
+
+    def get(self, key: str, default: Optional[T] = None) -> Optional[str | T]:
+        return self.raw.get(key, default)
+
+    def items(self) -> list[tuple[str, str]]:
+        return list(self.raw.items())
+
+    @classmethod
+    def parse(cls, value: str) -> "Cookie":
+        raw: dict[str, str] = {}
+
+        if not value:
+            return cls(raw)
+
+        for part in value.split(";"):
+            part = part.strip()
+
+            if not part or "=" not in part:
+                continue
+
+            name, _, raw_value = part.partition("=")
+            name = name.strip()
+            raw_value = raw_value.strip()
+
+            if not name:
+                continue
+
+            if len(raw_value) >= 2 and raw_value[0] == '"' and raw_value[-1] == '"':
+                raw_value = raw_value[1:-1]
+
+            raw[name] = cookie_unquote(raw_value)
+
+        return cls(raw)
+
+    def build(self) -> str:
+        return "; ".join(f"{name}={cookie_quote(value)}" for name, value in self.raw.items())
+
+class SetCookie:
+    def __init__(self, name: str, value: str, *, expires: Optional[str] = None, max_age: Optional[int] = None, domain: Optional[str] = None, path: Optional[str] = None, secure: bool = False, httponly: bool = False, samesite: Optional[Literal["Strict", "Lax", "None"]] = None):
+        self.name = name
+        self.value = value
+        self.expires = expires
+        self.max_age = max_age
+        self.domain = domain
+        self.path = path
+        self.secure = secure
+        self.httponly = httponly
+        self.samesite = samesite
+
+    def __str__(self) -> str:
+        return self.build()
+
+    def build(self) -> str:
+        parts = [f"{self.name}={cookie_quote(self.value)}"]
+
+        if self.expires is not None:
+            parts.append(f"Expires={self.expires}")
+        if self.max_age is not None:
+            parts.append(f"Max-Age={self.max_age}")
+        if self.domain is not None:
+            parts.append(f"Domain={self.domain}")
+        if self.path is not None:
+            parts.append(f"Path={self.path}")
+        if self.secure:
+            parts.append("Secure")
+        if self.httponly:
+            parts.append("HttpOnly")
+        if self.samesite is not None:
+            parts.append(f"SameSite={self.samesite}")
+
+        return "; ".join(parts)

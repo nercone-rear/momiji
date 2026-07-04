@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from collections.abc import AsyncIterator
 
 from .url import URL
-from .headers import Headers, CommaHeader, ContentType, ETag
+from .headers import Headers, CommaHeader, ContentType, ETag, Cookie, SetCookie
 
 class Role(Enum):
     ORIGIN = "Origin"
@@ -188,6 +188,10 @@ class Request(Message):
 
         return (self.method == "GET") and (upgrade == "websocket") and any(t.strip().lower() == "upgrade" for t in connection_tokens)
 
+    @property
+    def cookies(self) -> Cookie:
+        return Cookie(self.headers.get("Cookie", ""))
+
 @dataclass
 class Response(Message):
     status_code: int = 200
@@ -201,3 +205,9 @@ class Response(Message):
         elif isinstance(self.body, os.PathLike):
             stat = os.stat(self.body)
             return ETag(f'"{int(stat.st_mtime_ns):x}-{stat.st_size:x}"')
+
+    def set_cookie(self, name: str, value: str, *, expires: Optional[str] = None, max_age: Optional[int] = None, domain: Optional[str] = None, path: Optional[str] = "/", secure: bool = False, httponly: bool = False, samesite: Optional[Literal["Strict", "Lax", "None"]] = None):
+        self.headers.append("Set-Cookie", str(SetCookie(name, value, expires=expires, max_age=max_age, domain=domain, path=path, secure=secure, httponly=httponly, samesite=samesite)))
+
+    def delete_cookie(self, name: str, *, domain: Optional[str] = None, path: Optional[str] = "/", secure: bool = False, httponly: bool = False, samesite: Optional[Literal["Strict", "Lax", "None"]] = None):
+        self.set_cookie(name, "", max_age=0, domain=domain, path=path, secure=secure, httponly=httponly, samesite=samesite)
