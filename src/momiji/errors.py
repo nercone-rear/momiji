@@ -1,8 +1,8 @@
 class HTTPError(Exception):
     """An HTTP-level error to be reported to the client with a status code."""
 
-    def __init__(self, status_code: int = 400, message: str = "Bad Request"):
-        self.status_code = status_code
+    def __init__(self, code: int = 400, message: str = "Bad Request"):
+        self.code = code
         self.message = message
         super().__init__(message)
 

@@ -430,9 +430,9 @@ class Protocol(asyncio.Protocol):
 
     async def write_error_response(self, exc: HTTPError):
         body = exc.message.encode()
-        reason = REASON_PHRASES.get(exc.status_code, "Error")
+        reason = REASON_PHRASES.get(exc.code, "Error")
         head = (
-            f"HTTP/1.1 {exc.status_code} {reason}\r\n"
+            f"HTTP/1.1 {exc.code} {reason}\r\n"
             f"Content-Type: text/plain\r\n"
             f"Content-Length: {len(body)}\r\n"
             f"Connection: close\r\n"
