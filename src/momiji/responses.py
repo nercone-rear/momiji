@@ -1,5 +1,6 @@
 import os
 import json
+import mimetypes
 from typing import Optional
 from pathlib import Path
 
@@ -47,6 +48,9 @@ class FileResponse(Response):
         self.compression = compression
         self.minification = minification
         self.range = range
+
+        if content_type is None:
+            content_type, _ = mimetypes.guess_type(os.fspath(path))
 
         if content_type is not None:
             self.headers.set("Content-Type", content_type)

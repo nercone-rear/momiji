@@ -81,8 +81,14 @@ class TestFileResponse:
         resp = FileResponse(path, content_type="application/octet-stream")
         assert resp.headers.get("Content-Type") == "application/octet-stream"
 
-    def test_no_content_type_by_default(self, tmp_path):
-        path = tmp_path / "file.bin"
+    def test_content_type_guessed_from_extension(self, tmp_path):
+        path = tmp_path / "file.css"
+        path.write_text("hi")
+        resp = FileResponse(path)
+        assert resp.headers.get("Content-Type") == "text/css"
+
+    def test_no_content_type_when_extension_unknown(self, tmp_path):
+        path = tmp_path / "file.unknownext"
         path.write_text("hi")
         resp = FileResponse(path)
         assert resp.headers.get("Content-Type") is None
