@@ -6,6 +6,7 @@ import zlib
 
 import brotlicffi
 import zstandard
+import minify_html
 import pytest
 
 from momiji.server import Handler
@@ -68,6 +69,19 @@ class TestBasicRequestResponse:
         status_line, headers, body = await read_http_response(reader)
         assert status_line == "HTTP/1.1 404 Not Found"
         assert body == b"not found"
+        writer.close()
+
+    async def test_203_status_gets_correct_reason_phrase(self, make_server):
+        # 203 Non-Authoritative Information must not collide with 103 Early
+        # Hints in the server's reason-phrase table.
+        server = await make_server(handler=handler_returning(lambda req: Response(status_code=203, body=b"ok")))
+        reader, writer = await server.open_connection()
+
+        writer.write(b"GET / HTTP/1.1\r\nHost: example.com\r\n\r\n")
+        await writer.drain()
+
+        status_line, *_ = await read_http_response(reader)
+        assert status_line == "HTTP/1.1 203 Non-Authoritative Information"
         writer.close()
 
     async def test_no_handler_returns_501(self, make_server):
@@ -378,6 +392,30 @@ class TestCompressionNegotiation:
         _, headers, body = await read_http_response(reader)
         assert "content-encoding" not in headers
         assert body == b"plain body"
+        writer.close()
+
+
+class TestCompressionAndMinificationOrdering:
+    async def test_minification_applied_before_compression_not_after(self, make_server):
+        # Minification must run on the original text body, not on the
+        # already-compressed bytes -- otherwise decompressing the response
+        # yields garbage instead of minified HTML.
+        original = "<html>   <body>hi</body>   </html>"
+        expected = minify_html.minify(original, minify_js=True, minify_css=True, keep_comments=True, keep_html_and_head_opening_tags=True).encode("utf-8")
+
+        server = await make_server(handler=handler_returning(
+            lambda req: HTMLResponse(original, minification=True)
+        ))
+        reader, writer = await server.open_connection()
+
+        writer.write(b"GET / HTTP/1.1\r\nHost: a\r\nAccept-Encoding: gzip\r\n\r\n")
+        await writer.drain()
+
+        _, headers, body = await read_http_response(reader)
+        assert headers["content-encoding"] == "gzip"
+        decompressed = gzip.decompress(body)
+        assert decompressed == expected
+        assert decompressed != original.encode()  # sanity: minification actually changed something
         writer.close()
 
 

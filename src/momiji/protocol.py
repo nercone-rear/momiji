@@ -12,6 +12,7 @@ from .headers import Headers, CommaHeader, AcceptEncoding
 from .finalizer import finalize_request, finalize_response, HOP_BY_HOP_HEADERS
 from .websocket import WebSocket, GUID as WEBSOCKET_GUID
 from .limits import ConnectionTracker, RateLimiter
+from .url import parse_authority
 
 if TYPE_CHECKING:
     from .server import Handler
@@ -21,7 +22,7 @@ MAX_BODY_SIZE = 100 * 1024 * 1024
 
 REASON_PHRASES = {
     100: "Continue", 101: "Switching Protocols", 102: "Processing", 103: "Early Hints",
-    200: "OK", 201: "Created", 202: "Accepted", 103: "Non-Authoritative Information", 204: "No Content", 205: "Reset Content", 206: "Partial Content", 207: "Multi-Status", 208: "Already Reported", 226: "IM Used",
+    200: "OK", 201: "Created", 202: "Accepted", 203: "Non-Authoritative Information", 204: "No Content", 205: "Reset Content", 206: "Partial Content", 207: "Multi-Status", 208: "Already Reported", 226: "IM Used",
     300: "Multiple Choices", 301: "Moved Permanently", 302: "Found", 303: "See Other", 304: "Not Modified", 307: "Temporary Redirect", 308: "Permanent Redirect",
     400: "Bad Request", 401: "Unauthorized", 402: "Payment Required", 403: "Forbidden", 404: "Not Found", 405: "Method Not Allowed", 406: "Not Acceptable", 407: "Proxy Authentication Required", 408: "Request Timeout", 409: "Conflict", 410: "Gone", 411: "Length Required", 412: "Precondition Failed", 413: "Payload Too Large", 414: "URI Too Long", 415: "Unsupported Media Type", 416: "Range Not Satisfiable", 417: "Expectation Failed", 418: "I'm a teapot", 421: "Misdirected Request", 422: "Unprocessable Content", 423: "Locked", 424: "Failed Dependency", 425: "Too Early", 426: "Upgrade Required", 428: "Precondition Required", 429: "Too Many Requests", 431: "Request Header Fields Too Large", 451: "Unavailable For Legal Reasons",
     500: "Internal Server Error", 501: "Not Implemented", 502: "Bad Gateway", 503: "Service Unavailable", 504: "Gateway Timeout", 505: "HTTP Version Not Supported", 506: "Variant Also Negotiates", 507: "Insufficient Storage", 508: "Loop Detected", 510: "Not Extended", 511: "Network Authentication Required"
@@ -592,7 +593,7 @@ class Protocol(asyncio.Protocol):
         )
 
         try:
-            await finalize_request(request, strict=True)
+            await finalize_request(request)
         except HTTPViolationError as exc:
             raise HTTPReportedViolationError(400, str(exc))
 
@@ -690,11 +691,9 @@ class Protocol(asyncio.Protocol):
             await connection.close()
 
     async def handle_connect(self, request: Request) -> bool:
-        host, _, port_str = request.target.partition(":")
+        host, port = parse_authority(request.target)
 
-        try:
-            port = int(port_str)
-        except ValueError:
+        if not host or port is None:
             raise HTTPReportedViolationError(400, "Invalid CONNECT target")
 
         connection = Connection(src=self.src, dst=(host, port))
@@ -762,6 +761,8 @@ class Protocol(asyncio.Protocol):
     async def send_response(self, request: Request, response: Response) -> bool:
         accept_encoding = request.headers.get("Accept-Encoding")
 
+        response.minify()
+
         if response.compression and not response.compressed and accept_encoding and isinstance(response.body, bytes):
             preference = ["zstd", "br", "gzip", "deflate"]
             accept = AcceptEncoding.parse(accept_encoding)
@@ -776,7 +777,7 @@ class Protocol(asyncio.Protocol):
         keep_alive = self.should_keep_alive(request)
         response.protocol = request.protocol
 
-        await finalize_response(response, strict=False, role=self.role)
+        await finalize_response(response, role=self.role)
 
         if response.headers.get("Connection", "").lower() == "close":
             keep_alive = False

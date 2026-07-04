@@ -18,27 +18,18 @@ def make_request(*, protocol="HTTP/1.1", headers=None, trailers=None, method="GE
 
 
 class TestFinalizeRequestHost:
-    async def test_http11_requires_host_when_strict(self):
+    async def test_http11_requires_host(self):
         req = make_request(headers=Headers([]))
         with pytest.raises(HTTPViolationError):
-            await finalize_request(req, strict=True)
-
-    async def test_http11_host_not_required_when_not_strict(self):
-        req = make_request(headers=Headers([]))
-        await finalize_request(req, strict=False)  # must not raise
-
-    async def test_http11_rejects_multiple_host_headers_even_when_not_strict(self):
-        req = make_request(headers=Headers([("Host", ["a.com", "b.com"])]))
-        with pytest.raises(HTTPViolationError):
-            await finalize_request(req, strict=False)
+            await finalize_request(req)
 
     async def test_http11_single_host_header_ok(self):
         req = make_request(headers=Headers([("Host", ["a.com"])]))
-        await finalize_request(req, strict=True)  # must not raise
+        await finalize_request(req)  # must not raise
 
     async def test_http10_does_not_require_host(self):
         req = make_request(protocol="HTTP/1.0", headers=Headers([]))
-        await finalize_request(req, strict=True)  # must not raise
+        await finalize_request(req)  # must not raise
 
 
 class TestFinalizeRequestBodyFraming:
@@ -49,17 +40,7 @@ class TestFinalizeRequestBodyFraming:
             ("Content-Length", ["5"]),
         ]))
         with pytest.raises(HTTPViolationError):
-            await finalize_request(req, strict=True)
-
-    async def test_conflicting_transfer_encoding_and_content_length_non_strict_drops_content_length(self):
-        req = make_request(headers=Headers([
-            ("Host", ["a.com"]),
-            ("Transfer-Encoding", ["chunked"]),
-            ("Content-Length", ["5"]),
-        ]))
-        await finalize_request(req, strict=False)
-        assert "Content-Length" not in req.headers
-        assert "Transfer-Encoding" in req.headers
+            await finalize_request(req)
 
     async def test_transfer_encoding_must_end_in_chunked(self):
         req = make_request(headers=Headers([
@@ -67,14 +48,14 @@ class TestFinalizeRequestBodyFraming:
             ("Transfer-Encoding", ["gzip"]),
         ]))
         with pytest.raises(HTTPViolationError):
-            await finalize_request(req, strict=True)
+            await finalize_request(req)
 
     async def test_transfer_encoding_ending_in_chunked_is_accepted(self):
         req = make_request(headers=Headers([
             ("Host", ["a.com"]),
             ("Transfer-Encoding", ["gzip, chunked"]),
         ]))
-        await finalize_request(req, strict=True)  # must not raise
+        await finalize_request(req)  # must not raise
 
     async def test_conflicting_content_length_values_raises(self):
         req = make_request(headers=Headers([
@@ -82,40 +63,51 @@ class TestFinalizeRequestBodyFraming:
             ("Content-Length", ["5", "6"]),
         ]))
         with pytest.raises(HTTPViolationError):
-            await finalize_request(req, strict=True)
+            await finalize_request(req)
 
     async def test_repeated_identical_content_length_values_accepted(self):
         req = make_request(headers=Headers([
             ("Host", ["a.com"]),
             ("Content-Length", ["5", "5"]),
         ]))
-        await finalize_request(req, strict=True)  # must not raise
+        await finalize_request(req)  # must not raise
 
 
 class TestFinalizeRequestTrailers:
-    async def test_forbidden_trailers_removed_when_strict(self):
+    async def test_forbidden_trailers_removed(self):
         trailers = Headers([("Content-Length", ["5"]), ("X-Custom", ["1"])])
         req = make_request(headers=Headers([("Host", ["a.com"])]), trailers=trailers)
-        await finalize_request(req, strict=True)
+        await finalize_request(req)
         assert "Content-Length" not in req.trailers
         assert "X-Custom" in req.trailers
-
-    async def test_forbidden_trailers_kept_when_not_strict(self):
-        trailers = Headers([("Content-Length", ["5"])])
-        req = make_request(headers=Headers([]), trailers=trailers)
-        await finalize_request(req, strict=False)
-        assert "Content-Length" in req.trailers
 
     async def test_all_forbidden_trailer_names_are_stripped(self):
         trailers = Headers([(name.title(), ["x"]) for name in FORBIDDEN_TRAILERS])
         req = make_request(headers=Headers([("Host", ["a.com"])]), trailers=trailers)
-        await finalize_request(req, strict=True)
+        await finalize_request(req)
         assert trailers.raw == []
 
 
 def make_response(*, status_code=200, headers=None, body=None, protocol="HTTP/1.1", minification=False, range=None):
     resp = Response(status_code=status_code, headers=headers if headers is not None else Headers([]), body=body, protocol=protocol, minification=minification, range=range)
     return resp
+
+
+class TestFinalizeResponseTrailers:
+    async def test_forbidden_trailer_names_stripped_from_response(self):
+        trailers = Headers([("Content-Length", ["5"]), ("X-Custom", ["1"])])
+        resp = make_response(body=b"hi", headers=Headers([]))
+        resp.trailers = trailers
+        await finalize_response(resp)
+        assert "Content-Length" not in resp.trailers
+        assert "X-Custom" in resp.trailers
+
+    async def test_all_forbidden_trailer_names_are_stripped_from_response(self):
+        trailers = Headers([(name.title(), ["x"]) for name in FORBIDDEN_TRAILERS])
+        resp = make_response(body=b"hi", headers=Headers([]))
+        resp.trailers = trailers
+        await finalize_response(resp)
+        assert trailers.raw == []
 
 
 class TestFinalizeResponseHopByHop:
@@ -191,17 +183,6 @@ class TestFinalizeResponseStreamingBody:
 
 
 class TestFinalizeResponseFileBody:
-    async def test_small_file_with_minification_is_inlined(self, tmp_path):
-        path = tmp_path / "index.html"
-        path.write_text("<html>   <body>hi</body>   </html>")
-
-        resp = make_response(body=str(path), minification=True, headers=Headers([("Content-Type", ["text/html"])]))
-        await finalize_response(resp)
-
-        assert isinstance(resp.body, bytes)
-        assert resp.headers.get("Content-Length") == str(len(resp.body))
-        assert "Transfer-Encoding" not in resp.headers
-
     async def test_file_without_minification_streams_with_accept_ranges(self, tmp_path):
         path = tmp_path / "data.bin"
         path.write_bytes(b"0123456789")
@@ -264,6 +245,20 @@ class TestFinalizeResponseFileBody:
         await finalize_response(resp)
 
         assert resp.status_code == 416
+
+    async def test_range_request_bypasses_minification_inlining(self, tmp_path):
+        # A Range request against a small file that also has minification
+        # enabled must still honor the byte range: minifying and returning
+        # the whole rewritten file would silently ignore the requested range.
+        path = tmp_path / "index.html"
+        path.write_text("<html>   <body>0123456789</body>   </html>")
+
+        resp = make_response(body=str(path), minification=True, range=(2, 5), headers=Headers([("Content-Type", ["text/html"])]))
+        await finalize_response(resp)
+
+        assert resp.status_code == 206
+        assert resp.body == str(path)
+        assert resp.headers.get("Content-Range") is not None
 
     async def test_pathlike_body_supported(self, tmp_path):
         path = tmp_path / "data.bin"

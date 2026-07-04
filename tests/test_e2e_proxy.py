@@ -177,6 +177,43 @@ class TestConnectTunnel:
         assert b"502" in data
         writer.close()
 
+    async def test_connect_to_bracketed_ipv6_target_establishes_tunnel(self, make_server):
+        # CONNECT authority-form targets an IPv6 literal in bracket notation
+        # (e.g. "[::1]:PORT"); a naive `partition(":")` on the target would
+        # split inside the brackets and always fail with 400.
+        async def echo(reader, writer):
+            try:
+                while True:
+                    data = await reader.read(4096)
+                    if not data:
+                        break
+                    writer.write(data)
+                    await writer.drain()
+            finally:
+                writer.close()
+
+        echo_server = await asyncio.start_server(echo, host="::1", port=0)
+        echo_port = echo_server.sockets[0].getsockname()[1]
+
+        tunnel = await make_server(role=Role.TUNNEL)
+        reader, writer = await tunnel.open_connection()
+
+        writer.write(f"CONNECT [::1]:{echo_port} HTTP/1.1\r\nHost: [::1]:{echo_port}\r\n\r\n".encode())
+        await writer.drain()
+
+        head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=5)
+        assert head == b"HTTP/1.1 200 Connection Established\r\n\r\n"
+
+        writer.write(b"hello ipv6")
+        await writer.drain()
+
+        echoed = await read_exactly(reader, len(b"hello ipv6"))
+        assert echoed == b"hello ipv6"
+
+        writer.close()
+        echo_server.close()
+        await echo_server.wait_closed()
+
     async def test_non_connect_method_rejected_on_tunnel_role(self, make_server):
         tunnel = await make_server(role=Role.TUNNEL)
         reader, writer = await tunnel.open_connection()

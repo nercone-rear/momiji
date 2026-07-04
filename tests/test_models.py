@@ -205,6 +205,28 @@ class TestRequest:
         assert req.url.host == ""
 
 
+class TestIsWebsocketUpgrade:
+    def _req(self, *, upgrade="websocket", connection="Upgrade", method="GET"):
+        return Request(method=method, target="/ws", headers=Headers([("Upgrade", [upgrade]), ("Connection", [connection])]))
+
+    def test_true_for_proper_upgrade_request(self):
+        assert self._req().is_websocket_upgrade
+
+    def test_true_when_upgrade_is_one_of_several_connection_tokens(self):
+        assert self._req(connection="keep-alive, Upgrade").is_websocket_upgrade
+
+    def test_false_when_connection_token_only_contains_upgrade_as_substring(self):
+        # A bogus token like "some-upgrade-thing" must not satisfy the
+        # Connection: Upgrade requirement via a loose substring match.
+        assert not self._req(connection="some-upgrade-thing").is_websocket_upgrade
+
+    def test_false_for_non_get_method(self):
+        assert not self._req(method="POST").is_websocket_upgrade
+
+    def test_false_when_upgrade_header_is_not_websocket(self):
+        assert not self._req(upgrade="h2c").is_websocket_upgrade
+
+
 class TestResponse:
     def test_defaults(self):
         resp = Response()

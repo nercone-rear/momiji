@@ -11,24 +11,21 @@ FORBIDDEN_TRAILERS = frozenset({"transfer-encoding", "content-length", "host"})
 
 MAX_INLINE_FILE_SIZE = 10 * 1024 * 1024
 
-async def finalize_request(request: Request, strict: bool = True):
+async def finalize_request(request: Request):
     if request.protocol == "HTTP/1.1":
         host_values = request.headers["Host"]
 
         if host_values is not None and len(host_values) > 1:
             raise HTTPViolationError("multiple Host headers present")
 
-        if strict and not request.headers.get("Host"):
+        if not request.headers.get("Host"):
             raise HTTPViolationError("missing Host header")
 
     has_transfer_encoding = "Transfer-Encoding" in request.headers
     has_content_length = "Content-Length" in request.headers
 
     if has_transfer_encoding and has_content_length:
-        if strict:
-            raise HTTPViolationError("conflicting Transfer-Encoding and Content-Length headers")
-
-        request.headers.remove("Content-Length")
+        raise HTTPViolationError("conflicting Transfer-Encoding and Content-Length headers")
 
     if has_transfer_encoding:
         transfer_encoding = CommaHeader(request.headers.get("Transfer-Encoding", ""))
@@ -41,12 +38,12 @@ async def finalize_request(request: Request, strict: bool = True):
     if content_length_values and len(set(content_length_values)) > 1:
         raise HTTPViolationError("conflicting Content-Length values")
 
-    if strict and request.trailers is not None:
+    if request.trailers is not None:
         for name in [n for n, _ in request.trailers.raw]:
             if name.lower() in FORBIDDEN_TRAILERS:
                 request.trailers.remove(name)
 
-async def finalize_response(response: Response, strict: bool = True, role: Role = Role.ORIGIN):
+async def finalize_response(response: Response, role: Role = Role.ORIGIN):
     if role != Role.ORIGIN:
         connection_header = CommaHeader(response.headers.get("Connection", ""))
 
@@ -56,7 +53,10 @@ async def finalize_response(response: Response, strict: bool = True, role: Role 
         for name in HOP_BY_HOP_HEADERS:
             response.headers.remove(name)
 
-    response.minify()
+    if response.trailers is not None:
+        for name in [n for n, _ in response.trailers.raw]:
+            if name.lower() in FORBIDDEN_TRAILERS:
+                response.trailers.remove(name)
 
     if response.status_code in (204, 304) or (100 <= response.status_code < 200):
         response.headers.remove("Content-Length")
@@ -70,34 +70,25 @@ async def finalize_response(response: Response, strict: bool = True, role: Role 
         path = response.body if isinstance(response.body, str) else os.fspath(response.body)
         file_size = (await asyncio.to_thread(os.stat, path)).st_size
 
-        if response.minification and file_size <= MAX_INLINE_FILE_SIZE:
-            with open(path, "rb") as f:
-                response.body = await asyncio.to_thread(f.read)
+        response.headers.set("Accept-Ranges", "bytes")
 
-            response.minify()
+        if response.range is not None:
+            start, end = response.range
 
-            response.headers.set("Content-Length", str(len(response.body)))
-            response.headers.remove("Transfer-Encoding")
-        else:
-            response.headers.set("Accept-Ranges", "bytes")
-
-            if response.range is not None:
-                start, end = response.range
-
-                if start < 0 or start > end or start >= file_size:
-                    response.status_code = 416
-                    response.body = None
-                    response.headers.set("Content-Range", f"bytes */{file_size}")
-                    response.headers.set("Content-Length", "0")
-                else:
-                    end = min(end, file_size - 1)
-                    response.status_code = 206
-                    response.headers.set("Content-Range", f"bytes {start}-{end}/{file_size}")
-                    response.headers.set("Content-Length", str(end - start + 1))
+            if start < 0 or start > end or start >= file_size:
+                response.status_code = 416
+                response.body = None
+                response.headers.set("Content-Range", f"bytes */{file_size}")
+                response.headers.set("Content-Length", "0")
             else:
-                response.headers.set("Content-Length", str(file_size))
+                end = min(end, file_size - 1)
+                response.status_code = 206
+                response.headers.set("Content-Range", f"bytes {start}-{end}/{file_size}")
+                response.headers.set("Content-Length", str(end - start + 1))
+        else:
+            response.headers.set("Content-Length", str(file_size))
 
-            response.headers.remove("Transfer-Encoding")
+        response.headers.remove("Transfer-Encoding")
 
     elif response.body is None:
         response.headers.set("Content-Length", "0")

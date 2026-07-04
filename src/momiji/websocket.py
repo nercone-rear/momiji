@@ -219,12 +219,12 @@ class WebSocket:
         self.transport.write(self.build_frame(opcode, payload, fin=True))
 
     def ping(self, payload: bytes = b""):
-        self.transport.write(self.build_frame(OPCODE_PING, payload, fin=True))
+        self.transport.write(self.build_frame(OPCODE_PING, payload[:125], fin=True))
 
     def close(self, code: int = 1000, reason: str = ""):
         if self.close_sent:
             return
 
         self.close_sent = True
-        payload = code.to_bytes(2, "big") + reason.encode("utf-8")
+        payload = code.to_bytes(2, "big") + reason.encode("utf-8")[:123]
         self.transport.write(self.build_frame(OPCODE_CLOSE, payload, fin=True))

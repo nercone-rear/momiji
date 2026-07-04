@@ -152,10 +152,10 @@ class Request(Message):
 
     @property
     def is_websocket_upgrade(self) -> bool:
-        upgrade    = self.headers.get("Upgrade", "").lower().strip()
-        connection = self.headers.get("Connection", "").lower()
+        upgrade = self.headers.get("Upgrade", "").lower().strip()
+        connection_tokens = CommaHeader(self.headers.get("Connection", "")).raw
 
-        return (self.method == "GET") and (upgrade == "websocket") and ("upgrade" in connection)
+        return (self.method == "GET") and (upgrade == "websocket") and any(t.strip().lower() == "upgrade" for t in connection_tokens)
 
 @dataclass
 class Response(Message):
