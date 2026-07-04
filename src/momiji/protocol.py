@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import os
-import asyncio
 import base64
 import hashlib
+import asyncio
 from typing import Optional, TYPE_CHECKING
 
 from .errors import HTTPViolationError, HTTPError, HTTPReportedViolationError
@@ -26,6 +26,31 @@ REASON_PHRASES = {
     400: "Bad Request", 401: "Unauthorized", 402: "Payment Required", 403: "Forbidden", 404: "Not Found", 405: "Method Not Allowed", 406: "Not Acceptable", 407: "Proxy Authentication Required", 408: "Request Timeout", 409: "Conflict", 410: "Gone", 411: "Length Required", 412: "Precondition Failed", 413: "Payload Too Large", 414: "URI Too Long", 415: "Unsupported Media Type", 416: "Range Not Satisfiable", 417: "Expectation Failed", 418: "I'm a teapot", 421: "Misdirected Request", 422: "Unprocessable Content", 423: "Locked", 424: "Failed Dependency", 425: "Too Early", 426: "Upgrade Required", 428: "Precondition Required", 429: "Too Many Requests", 431: "Request Header Fields Too Large", 451: "Unavailable For Legal Reasons",
     500: "Internal Server Error", 501: "Not Implemented", 502: "Bad Gateway", 503: "Service Unavailable", 504: "Gateway Timeout", 505: "HTTP Version Not Supported", 506: "Variant Also Negotiates", 507: "Insufficient Storage", 508: "Loop Detected", 510: "Not Extended", 511: "Network Authentication Required"
 }
+
+def build_upgrade_response(request: "Request") -> bytes:
+    version = request.headers.get("Sec-WebSocket-Version")
+    key = request.headers.get("Sec-WebSocket-Key")
+
+    if version != "13" or not key:
+        raise HTTPError(426, "Upgrade Required")
+
+    try:
+        decoded_key = base64.b64decode(key)
+    except Exception:
+        raise HTTPError(400, "Invalid Sec-WebSocket-Key")
+
+    if len(decoded_key) != 16:
+        raise HTTPError(400, "Invalid Sec-WebSocket-Key")
+
+    accept_key = base64.b64encode(hashlib.sha1((key + WEBSOCKET_GUID).encode("ascii")).digest()).decode("ascii")
+
+    return (
+        "HTTP/1.1 101 Switching Protocols\r\n"
+        "Upgrade: websocket\r\n"
+        "Connection: Upgrade\r\n"
+        f"Sec-WebSocket-Accept: {accept_key}\r\n"
+        "\r\n"
+    ).encode("latin-1")
 
 def find_body_mode(headers: Headers, *, is_response: bool, status_code: Optional[int] = None) -> tuple[str, int]:
     if is_response and status_code is not None:
@@ -533,38 +558,8 @@ class Protocol(asyncio.Protocol):
         ).encode("latin-1")
         await self.write(head + body)
 
-    def is_websocket_upgrade(self, request: Request) -> bool:
-        upgrade = request.headers.get("Upgrade", "")
-        connection_tokens = CommaHeader(request.headers.get("Connection", ""))
-        has_upgrade_token = any(t.lower() == "upgrade" for t in connection_tokens.raw)
-        return (upgrade.lower() == "websocket" and has_upgrade_token and request.headers.get("Sec-WebSocket-Key") is not None)
-
     async def do_websocket_upgrade(self, request: Request):
-        version = request.headers.get("Sec-WebSocket-Version")
-        key = request.headers.get("Sec-WebSocket-Key")
-
-        if version != "13" or not key:
-            raise HTTPError(426, "Upgrade Required")
-
-        try:
-            decoded_key = base64.b64decode(key)
-        except Exception:
-            raise HTTPError(400, "Invalid Sec-WebSocket-Key")
-
-        if len(decoded_key) != 16:
-            raise HTTPError(400, "Invalid Sec-WebSocket-Key")
-
-        accept_key = base64.b64encode(hashlib.sha1((key + WEBSOCKET_GUID).encode("ascii")).digest()).decode("ascii")
-
-        response_head = (
-            "HTTP/1.1 101 Switching Protocols\r\n"
-            "Upgrade: websocket\r\n"
-            "Connection: Upgrade\r\n"
-            f"Sec-WebSocket-Accept: {accept_key}\r\n"
-            "\r\n"
-        ).encode("latin-1")
-
-        await self.write(response_head)
+        await self.write(build_upgrade_response(request))
 
         self.ws_queue = asyncio.Queue()
         self.websocket = WebSocket(transport=self.transport, feed=self.ws_queue, is_client=False)
@@ -610,7 +605,7 @@ class Protocol(asyncio.Protocol):
             raise HTTPError(405, "Method Not Allowed")
 
         if self.role == Role.ORIGIN:
-            if self.is_websocket_upgrade(request) and self.handler and self.handler.on_websocket:
+            if request.is_websocket_upgrade and self.handler and self.handler.on_websocket:
                 await self.do_websocket_upgrade(request)
                 return True
 

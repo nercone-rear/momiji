@@ -2,6 +2,7 @@ import os
 import json
 import gzip
 import zlib
+import base64
 import rjsmin
 import rcssmin
 import ipaddress
@@ -149,6 +150,20 @@ class Request(Message):
     def __post_init__(self):
         authority = self.headers.get("Host", "")
         self.url = URL.from_target(self.target, self.scheme, authority)
+
+    @property
+    def is_websocket_upgrade(self) -> bool:
+        upgrade           = self.headers.get("Upgrade", "").lower().strip()
+        connection        = self.headers.get("Connection", "").lower()
+        websocket_key     = self.headers.get("Sec-WebSocket-Key", "").strip()
+        websocket_version = self.headers.get("Sec-WebSocket-Version", "").strip()
+
+        try:
+            key_valid = len(base64.b64decode(websocket_key, validate=True)) == 16
+        except Exception:
+            key_valid = False
+
+        return (self.method == "GET") and (upgrade == "websocket") and ("upgrade" in connection) and (websocket_version == "13") and key_valid
 
 @dataclass
 class Response(Message):
