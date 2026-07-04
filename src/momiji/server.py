@@ -8,7 +8,7 @@ from .protocol import Protocol
 
 class Handler:
     def __init__(self, on_request: Optional[Callable] = None, on_websocket: Optional[Callable] = None):
-        self.on_request = on_request  # (request: Request) -> Response
+        self.on_request = on_request      # (request: Request) -> Response
         self.on_websocket = on_websocket  # (websocket: WebSocket) -> None
 
 class Server:
