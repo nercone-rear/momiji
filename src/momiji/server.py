@@ -41,6 +41,7 @@ class Listener:
                 pass
 
             sock.bind(self.path)
+            os.chmod(self.path, 0o666)
         else:
             sock = socket.socket(self.ip_version.value, socket.SOCK_STREAM)
             sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -66,18 +67,7 @@ class Handler:
         self.on_websocket = on_websocket  # (websocket: WebSocket) -> None
 
 class Server:
-    def __init__(
-        self,
-        role: Role = Role.ORIGIN,
-        handler: Optional[Handler] = None,
-        upstream: Optional[tuple[str, int]] = None,
-        *,
-        max_connections: Optional[int] = None,
-        idle_timeout: Optional[float] = None,
-        request_timeout: Optional[float] = None,
-        rate_limit: Optional[tuple[float, float]] = None,
-        shutdown_timeout: float = 30.0,
-    ):
+    def __init__(self, role: Role = Role.ORIGIN, handler: Optional[Handler] = None, upstream: Optional[tuple[str, int]] = None, *, max_connections: Optional[int] = None, idle_timeout: Optional[float] = None, request_timeout: Optional[float] = None, rate_limit: Optional[tuple[float, float]] = None, shutdown_timeout: float = 30.0):
         self.role = role
         self.handler = handler or Handler()
         self.upstream = upstream
