@@ -79,8 +79,8 @@ class Server:
             self.run_worker(sockets)
             return
 
-        shared_sockets = [listener.bind() for listener in listeners if listener.is_unix]
-        tcp_listeners = [listener for listener in listeners if not listener.is_unix]
+        shared_sockets = [listener.bind() for listener in listeners if listener.is_uds]
+        tcp_listeners = [listener for listener in listeners if not listener.is_uds]
 
         pids = [self.fork_worker(shared_sockets, tcp_listeners) for _ in range(workers)]
 
