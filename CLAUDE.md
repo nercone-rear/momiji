@@ -2,7 +2,9 @@
 This file provides information that Claude Code needs to know when handling the source code of Momiji.
 
 ## Overview
-Momiji is a HTTP/1.1 Server Library for Python.
+Momiji is an HTTP/1.1 server written in Python. It provides the essential features required of an origin server, as well as experimental proxy capabilities.
+
+Since it is intended to be used as a backend for a reverse proxy such as Nginx, it does not support SSL/TLS or HTTP/2/3.
 
 ## Automated Testing
 pytest is used for automated testing. While minimal tests can be covered by automated tests, they are not perfect, so prioritize manual testing as much as possible.
