@@ -82,7 +82,7 @@ class ChunkedDecoder:
 
                 if idx == -1:
                     if len(buffer) > 4096:
-                        raise HTTPReportedViolationError(400, "chunk size line too long")
+                        raise HTTPError(400, "chunk size line too long")
                     return False
 
                 line = bytes(buffer[:idx])
@@ -121,7 +121,7 @@ class ChunkedDecoder:
 
                 if idx == -1:
                     if len(buffer) > MAX_HEADER_SIZE:
-                        raise HTTPReportedViolationError(400, "trailer section too large")
+                        raise HTTPError(400, "trailer section too large")
                     return False
 
                 self.trailer_buffer = bytes(buffer[:idx])
@@ -159,7 +159,7 @@ class MessageParser:
 
             if idx == -1:
                 if len(self.buffer) > MAX_HEADER_SIZE:
-                    raise HTTPReportedViolationError(431, "Request Header Fields Too Large")
+                    raise HTTPError(431, "Request Header Fields Too Large")
                 return None
 
             head = bytes(self.buffer[:idx])
@@ -192,7 +192,7 @@ class MessageParser:
                     return None
 
                 if self.content_length > MAX_BODY_SIZE:
-                    raise HTTPReportedViolationError(413, "Payload Too Large")
+                    raise HTTPError(413, "Payload Too Large")
 
                 self.body = bytearray(self.buffer[:self.content_length])
                 del self.buffer[:self.content_length]
@@ -202,7 +202,7 @@ class MessageParser:
                     return None
 
                 if len(self.chunked.body) > MAX_BODY_SIZE:
-                    raise HTTPReportedViolationError(413, "Payload Too Large")
+                    raise HTTPError(413, "Payload Too Large")
 
                 self.body = self.chunked.body
 
@@ -535,15 +535,15 @@ class Protocol(asyncio.Protocol):
         key = request.headers.get("Sec-WebSocket-Key")
 
         if version != "13" or not key:
-            raise HTTPReportedViolationError(426, "Upgrade Required")
+            raise HTTPError(426, "Upgrade Required")
 
         try:
             decoded_key = base64.b64decode(key)
         except Exception:
-            raise HTTPReportedViolationError(400, "Invalid Sec-WebSocket-Key")
+            raise HTTPError(400, "Invalid Sec-WebSocket-Key")
 
         if len(decoded_key) != 16:
-            raise HTTPReportedViolationError(400, "Invalid Sec-WebSocket-Key")
+            raise HTTPError(400, "Invalid Sec-WebSocket-Key")
 
         accept_key = base64.b64encode(hashlib.sha1((key + WEBSOCKET_GUID).encode("ascii")).digest()).decode("ascii")
 
@@ -573,7 +573,7 @@ class Protocol(asyncio.Protocol):
             raise HTTPReportedViolationError(505, "HTTP Version Not Supported")
 
         if method not in ("GET", "HEAD", "POST", "PUT", "DELETE", "CONNECT", "OPTIONS", "TRACE", "PATCH"):
-            raise HTTPReportedViolationError(501, "Not Implemented")
+            raise HTTPError(501, "Not Implemented")
 
         client_addr = self.client_addr or ("", 0)
 
@@ -594,11 +594,11 @@ class Protocol(asyncio.Protocol):
 
         if self.role == Role.TUNNEL:
             if method != "CONNECT":
-                raise HTTPReportedViolationError(400, "TUNNEL role only supports CONNECT")
+                raise HTTPError(400, "TUNNEL role only supports CONNECT")
             return await self.handle_connect(request)
 
         if method == "CONNECT":
-            raise HTTPReportedViolationError(405, "Method Not Allowed")
+            raise HTTPError(405, "Method Not Allowed")
 
         if self.role == Role.ORIGIN:
             if self.is_websocket_upgrade(request) and self.handler and self.handler.on_websocket:
@@ -621,7 +621,7 @@ class Protocol(asyncio.Protocol):
             target = (request.url.host, request.url.port or 80)
 
         if not target or not target[0]:
-            raise HTTPReportedViolationError(400, "Cannot determine upstream target")
+            raise HTTPError(400, "Cannot determine upstream target")
 
         connection = Connection(src=self.src, dst=target)
 

@@ -2,7 +2,7 @@ import pytest
 
 from momiji import protocol as protocol_module
 from momiji.protocol import find_body_mode, ChunkedDecoder, MessageParser
-from momiji.errors import HTTPReportedViolationError
+from momiji.errors import HTTPError, HTTPReportedViolationError
 from momiji.headers import Headers
 
 
@@ -158,13 +158,13 @@ class TestChunkedDecoder:
     def test_oversized_chunk_size_line_raises(self):
         dec = ChunkedDecoder()
         buf = bytearray(b"1" * 5000)
-        with pytest.raises(HTTPReportedViolationError):
+        with pytest.raises(HTTPError):
             dec.feed(buf)
 
     def test_oversized_trailer_section_raises(self):
         dec = ChunkedDecoder()
         buf = bytearray(b"0\r\n" + b"X-Foo: " + b"a" * 100000)
-        with pytest.raises(HTTPReportedViolationError):
+        with pytest.raises(HTTPError):
             dec.feed(buf)
 
 
@@ -212,7 +212,7 @@ class TestMessageParserRequest:
     def test_head_too_large_raises(self):
         parser = MessageParser(is_response=False)
         parser.feed(b"GET / HTTP/1.1\r\n" + b"X-Foo: " + b"a" * (70 * 1024) + b"\r\n")
-        with pytest.raises(HTTPReportedViolationError):
+        with pytest.raises(HTTPError):
             parser.try_parse()
 
     def test_head_too_large_raises_even_when_delivered_in_one_piece(self):
@@ -223,14 +223,14 @@ class TestMessageParserRequest:
         # gradually and is caught mid-stream.
         parser = MessageParser(is_response=False)
         parser.feed(b"GET / HTTP/1.1\r\n" + b"X-Foo: " + b"a" * (70 * 1024) + b"\r\n\r\n")
-        with pytest.raises(HTTPReportedViolationError):
+        with pytest.raises(HTTPError):
             parser.try_parse()
 
     def test_body_exceeding_max_size_raises(self, monkeypatch):
         monkeypatch.setattr(protocol_module, "MAX_BODY_SIZE", 3)
         parser = MessageParser(is_response=False)
         parser.feed(b"POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 10\r\n\r\n" + b"x" * 10)
-        with pytest.raises(HTTPReportedViolationError):
+        with pytest.raises(HTTPError):
             parser.try_parse()
 
 
