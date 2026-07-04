@@ -50,10 +50,16 @@ class TestGatewayRole:
         # Transfer-Encoding nor Content-Length despite carrying a body,
         # desynchronizing the upstream connection's framing (request
         # smuggling) and corrupting any pipelined request that follows.
+        # Both pipelined requests are handled by the same upstream_handler, and
+        # the gateway may forward the second request before the client has
+        # finished reading the first response. Key the recorded bodies by
+        # request path (instead of a single shared slot) and only assert
+        # after both responses have been read, so the assertions don't race
+        # against that forwarding order.
         received = {}
 
         async def upstream_handler(request):
-            received["body"] = request.body
+            received[request.url.path] = request.body
             return PlainTextResponse("ok")
 
         upstream = await make_server(handler=Handler(on_request=upstream_handler))
@@ -68,9 +74,9 @@ class TestGatewayRole:
         await writer.drain()
 
         await read_http_response(reader)
-        assert received["body"] == b"hello"
-
         status_line, _, body = await read_http_response(reader)
+
+        assert received["/"] == b"hello"
         assert status_line == "HTTP/1.1 200 OK"
         assert body == b"ok"
         writer.close()
