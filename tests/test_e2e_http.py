@@ -238,6 +238,22 @@ class TestProtocolViolations:
         assert status_line == "HTTP/1.1 400 Bad Request"
         writer.close()
 
+    async def test_request_target_with_bare_cr_returns_400(self, make_server):
+        # A bare CR (not part of a CRLF pair) inside the request-target is
+        # not rejected by the \r\n\r\n-based head-boundary scan, since that
+        # scan only looks for the full CRLF pair. If forwarded upstream
+        # verbatim (proxy/gateway roles), such a byte can smuggle an extra
+        # line into the upstream request. It must be rejected outright.
+        server = await make_server()
+        reader, writer = await server.open_connection()
+
+        writer.write(b"GET /a\rInjected: 1 HTTP/1.1\r\nHost: a\r\n\r\n")
+        await writer.drain()
+
+        status_line, *_ = await read_http_response(reader)
+        assert status_line == "HTTP/1.1 400 Bad Request"
+        writer.close()
+
     async def test_missing_host_header_http11_returns_400(self, make_server):
         server = await make_server()
         reader, writer = await server.open_connection()

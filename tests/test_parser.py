@@ -22,6 +22,20 @@ class TestFindBodyModeResponseStatusShortCircuit:
         mode, length = find_body_mode(headers, is_response=True, status_code=200)
         assert (mode, length) == ("length", 5)
 
+    def test_head_response_has_no_body_regardless_of_content_length(self):
+        # RFC 7230 3.3.3: a response to a HEAD request never has a body,
+        # even though Content-Length may (correctly) describe the body a
+        # GET would have returned. A response parser that ignores this
+        # would wait forever for bytes that are never sent.
+        headers = headers_from([("Content-Length", "12345")])
+        mode, length = find_body_mode(headers, is_response=True, status_code=200, request_method="HEAD")
+        assert (mode, length) == ("none", 0)
+
+    def test_oversized_content_length_rejected_before_buffering(self):
+        headers = headers_from([("Content-Length", str(protocol_module.MAX_BODY_SIZE + 1))])
+        with pytest.raises(HTTPError):
+            find_body_mode(headers, is_response=False)
+
 
 class TestFindBodyModeTransferEncoding:
     def test_chunked_alone(self):
@@ -230,6 +244,27 @@ class TestMessageParserRequest:
         monkeypatch.setattr(protocol_module, "MAX_BODY_SIZE", 3)
         parser = MessageParser(is_response=False)
         parser.feed(b"POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 10\r\n\r\n" + b"x" * 10)
+        with pytest.raises(HTTPError):
+            parser.try_parse()
+
+    def test_oversized_content_length_rejected_without_waiting_for_body_bytes(self, monkeypatch):
+        # A declared Content-Length larger than MAX_BODY_SIZE must be
+        # rejected as soon as the headers are parsed, not only after the
+        # (attacker-supplied) body has actually been buffered in full -
+        # otherwise the size limit provides no memory-exhaustion
+        # protection at all against a client willing to send that much data.
+        monkeypatch.setattr(protocol_module, "MAX_BODY_SIZE", 3)
+        parser = MessageParser(is_response=False)
+        parser.feed(b"POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 10\r\n\r\n")
+        with pytest.raises(HTTPError):
+            parser.try_parse()
+
+    def test_oversized_single_chunk_rejected_without_waiting_for_chunk_bytes(self, monkeypatch):
+        monkeypatch.setattr(protocol_module, "MAX_BODY_SIZE", 3)
+        parser = MessageParser(is_response=False)
+        parser.feed(b"POST / HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\n\r\n")
+        parser.try_parse()
+        parser.feed(b"ff\r\n")  # 255-byte chunk announced, no chunk data sent yet
         with pytest.raises(HTTPError):
             parser.try_parse()
 

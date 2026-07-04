@@ -137,6 +137,9 @@ class WebSocket:
                     self.protocol_error(1002, "control frame must not be fragmented")
 
                 if opcode == OPCODE_CLOSE:
+                    if len(payload) == 1:
+                        self.protocol_error(1002, "close frame payload must be 0 or at least 2 bytes")
+
                     if not self.close_sent:
                         code = 1000
                         reason = b""

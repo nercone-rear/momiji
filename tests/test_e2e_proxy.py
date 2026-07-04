@@ -42,6 +42,63 @@ class TestGatewayRole:
         assert received["body"] == b"hello"
         writer.close()
 
+    async def test_chunked_request_body_forwarded_with_correct_length(self, make_server):
+        # The gateway decodes an incoming chunked body into plain bytes and
+        # strips Transfer-Encoding (a hop-by-hop header) before forwarding.
+        # It must therefore set an explicit Content-Length reflecting the
+        # decoded body, otherwise the forwarded request has neither
+        # Transfer-Encoding nor Content-Length despite carrying a body,
+        # desynchronizing the upstream connection's framing (request
+        # smuggling) and corrupting any pipelined request that follows.
+        received = {}
+
+        async def upstream_handler(request):
+            received["body"] = request.body
+            return PlainTextResponse("ok")
+
+        upstream = await make_server(handler=Handler(on_request=upstream_handler))
+        gateway = await make_server(role=Role.GATEWAY, upstream=(upstream.host, upstream.port))
+
+        reader, writer = await gateway.open_connection()
+        writer.write(
+            b"POST / HTTP/1.1\r\nHost: whatever.invalid\r\nTransfer-Encoding: chunked\r\n\r\n"
+            b"5\r\nhello\r\n0\r\n\r\n"
+            b"GET /next HTTP/1.1\r\nHost: whatever.invalid\r\n\r\n"
+        )
+        await writer.drain()
+
+        await read_http_response(reader)
+        assert received["body"] == b"hello"
+
+        status_line, _, body = await read_http_response(reader)
+        assert status_line == "HTTP/1.1 200 OK"
+        assert body == b"ok"
+        writer.close()
+
+    async def test_head_request_response_not_stuck_waiting_for_body(self, make_server):
+        # A response to a HEAD request may carry a Content-Length header
+        # describing the body that *would* accompany a GET, but the actual
+        # bytes are never sent. The response parser must know the request
+        # was a HEAD and skip waiting for a body, or the gateway hangs.
+        async def upstream_handler(request):
+            # The upstream (itself a spec-compliant origin server) sets
+            # Content-Length from the real body but omits the actual bytes
+            # because the request method is HEAD - exactly as RFC 7230
+            # requires, and exactly what trips up a response parser that
+            # isn't aware of the original request method.
+            return PlainTextResponse("hello world, this is the body")
+
+        upstream = await make_server(handler=Handler(on_request=upstream_handler))
+        gateway = await make_server(role=Role.GATEWAY, upstream=(upstream.host, upstream.port))
+
+        reader, writer = await gateway.open_connection()
+        writer.write(b"HEAD / HTTP/1.1\r\nHost: whatever.invalid\r\n\r\n")
+        await writer.drain()
+
+        head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), timeout=5)
+        assert b"200" in head
+        writer.close()
+
     async def test_upstream_response_headers_forwarded(self, make_server):
         from momiji.models import Response
         from momiji.headers import Headers

@@ -53,9 +53,12 @@ def build_upgrade_response(request: "Request") -> bytes:
         "\r\n"
     ).encode("latin-1")
 
-def find_body_mode(headers: Headers, *, is_response: bool, status_code: Optional[int] = None) -> tuple[str, int]:
-    if is_response and status_code is not None:
-        if status_code in (204, 304) or (100 <= status_code < 200):
+def find_body_mode(headers: Headers, *, is_response: bool, status_code: Optional[int] = None, request_method: Optional[str] = None) -> tuple[str, int]:
+    if is_response:
+        if request_method == "HEAD":
+            return "none", 0
+
+        if status_code is not None and (status_code in (204, 304) or (100 <= status_code < 200)):
             return "none", 0
 
     transfer_encoding_values = headers["Transfer-Encoding"]
@@ -85,6 +88,9 @@ def find_body_mode(headers: Headers, *, is_response: bool, status_code: Optional
 
         if length < 0:
             raise HTTPReportedViolationError(400, "Invalid Content-Length")
+
+        if length > MAX_BODY_SIZE:
+            raise HTTPError(413, "Payload Too Large")
 
         return "length", length
 
@@ -120,6 +126,10 @@ class ChunkedDecoder:
                     raise HTTPReportedViolationError(400, "invalid chunk size")
 
                 self.remaining = int(size_str, 16)
+
+                if len(self.body) + self.remaining > MAX_BODY_SIZE:
+                    raise HTTPError(413, "Payload Too Large")
+
                 self.state = "trailer" if self.remaining == 0 else "data"
 
             elif self.state == "data":
@@ -157,8 +167,9 @@ class ChunkedDecoder:
         return True
 
 class MessageParser:
-    def __init__(self, *, is_response: bool):
+    def __init__(self, *, is_response: bool, request_method: Optional[str] = None):
         self.is_response = is_response
+        self.request_method = request_method
         self.buffer = bytearray()
         self.closed_eof = False
         self.reset()
@@ -208,7 +219,7 @@ class MessageParser:
                 if len(parts) >= 2 and parts[1].isdigit():
                     status_code = int(parts[1])
 
-            self.body_mode, self.content_length = find_body_mode(self.headers, is_response=self.is_response, status_code=status_code)
+            self.body_mode, self.content_length = find_body_mode(self.headers, is_response=self.is_response, status_code=status_code, request_method=self.request_method)
 
             if self.body_mode == "chunked":
                 self.chunked = ChunkedDecoder()
@@ -222,9 +233,6 @@ class MessageParser:
             elif self.body_mode == "length":
                 if len(self.buffer) < self.content_length:
                     return None
-
-                if self.content_length > MAX_BODY_SIZE:
-                    raise HTTPError(413, "Payload Too Large")
 
                 self.body = bytearray(self.buffer[:self.content_length])
                 del self.buffer[:self.content_length]
@@ -574,6 +582,9 @@ class Protocol(asyncio.Protocol):
 
         method, target, version_token = parts
 
+        if any(ord(c) < 0x20 or ord(c) == 0x7F for c in target):
+            raise HTTPReportedViolationError(400, "Invalid request target")
+
         if version_token not in ("HTTP/1.0", "HTTP/1.1"):
             raise HTTPReportedViolationError(505, "HTTP Version Not Supported")
 
@@ -644,6 +655,11 @@ class Protocol(asyncio.Protocol):
             for name in list(HOP_BY_HOP_HEADERS):
                 request.headers.remove(name)
 
+            if isinstance(request.body, bytes):
+                request.headers.set("Content-Length", str(len(request.body)))
+            else:
+                request.headers.remove("Content-Length")
+
             path = request.url.path or "/"
             if request.url.query:
                 path += f"?{request.url.query}"
@@ -656,7 +672,7 @@ class Protocol(asyncio.Protocol):
 
             await connection.send(raw)
 
-            parser = MessageParser(is_response=True)
+            parser = MessageParser(is_response=True, request_method=request.method)
             result = None
 
             while True:

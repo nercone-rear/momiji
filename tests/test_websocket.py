@@ -1,6 +1,11 @@
 import asyncio
 
+import pytest
+
 from momiji.websocket import WebSocket, OPCODE_CLOSE, OPCODE_PING
+from momiji.errors import WebSocketProtocolError
+
+from conftest import build_client_ws_frame
 
 
 class FakeTransport:
@@ -67,3 +72,17 @@ class TestControlFramePayloadLimit:
         opcode, payload = parse_frame(bytes(transport.written))
         assert int.from_bytes(payload[:2], "big") == 1000
         assert payload[2:] == b"bye"
+
+
+class TestCloseFramePayloadValidation:
+    # RFC 6455 5.5.1: a Close frame's body, if present, must be at least
+    # two bytes (the status code) - a length of exactly 1 is not a valid
+    # encoding of anything and must be treated as a protocol error.
+    async def test_close_frame_with_single_byte_payload_is_protocol_error(self):
+        ws, _transport = make_ws()
+        await ws.feed.put(build_client_ws_frame(OPCODE_CLOSE, b"\x01"))
+
+        with pytest.raises(WebSocketProtocolError) as exc_info:
+            await ws.read_message()
+
+        assert exc_info.value.code == 1002
