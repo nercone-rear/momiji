@@ -410,6 +410,21 @@ class TestCompressionNegotiation:
         assert body == b"plain body"
         writer.close()
 
+    async def test_small_file_response_is_compressed(self, make_server, tmp_path):
+        path = tmp_path / "data.txt"
+        path.write_bytes(b"x" * 200)
+
+        server = await make_server(handler=handler_returning(lambda req: FileResponse(path)))
+        reader, writer = await server.open_connection()
+
+        writer.write(b"GET / HTTP/1.1\r\nHost: a\r\nAccept-Encoding: gzip\r\n\r\n")
+        await writer.drain()
+
+        _, headers, body = await read_http_response(reader)
+        assert headers["content-encoding"] == "gzip"
+        assert gzip.decompress(body) == b"x" * 200
+        writer.close()
+
 
 class TestCompressionAndMinificationOrdering:
     async def test_minification_applied_before_compression_not_after(self, make_server):

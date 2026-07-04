@@ -775,20 +775,8 @@ class Protocol(asyncio.Protocol):
         return request_wants_keep_alive
 
     async def send_response(self, request: Request, response: Response) -> bool:
-        accept_encoding = request.headers.get("Accept-Encoding")
-
         response.minify()
-
-        if response.compression and not response.compressed and accept_encoding and isinstance(response.body, bytes):
-            preference = ["zstd", "br", "gzip", "deflate"]
-            accept = AcceptEncoding.parse(accept_encoding)
-            acceptable = {c for c, q in accept.raw if q > 0}
-            wildcard_ok = any(c == "*" and q > 0 for c, q in accept.raw)
-
-            best = next((c for c in preference if c in acceptable or (wildcard_ok and c not in {c2 for c2, q in accept.raw if q == 0})), None)
-
-            if best is not None:
-                response.compress([best])
+        response.compress(request.headers.get("Accept-Encoding", ""))
 
         keep_alive = self.should_keep_alive(request)
         response.protocol = request.protocol

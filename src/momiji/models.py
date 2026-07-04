@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from collections.abc import AsyncIterator
 
 from .url import URL
-from .headers import Headers, CommaHeader, ContentType, ETag, Cookie, SetCookie
+from .headers import Headers, CommaHeader, AcceptEncoding, ContentType, ETag, Cookie, SetCookie
 
 class Role(Enum):
     ORIGIN = "Origin"
@@ -58,7 +58,19 @@ class Message:
     def has_real_body(self) -> bool:
         return self.body is not None and isinstance(self.body, bytes)
 
-    def compress(self, encodings: Optional[str] = None, *, max_offload_filesize: int = 32768):
+    def compress(self, accept_encoding: str, *, max_offload_filesize: int = 32768):
+        if self.compression and not self.compressed and accept_encoding and isinstance(self.body, (bytes, str, os.PathLike)):
+            preference = ["zstd", "br", "gzip", "deflate"]
+            accept = AcceptEncoding.parse(accept_encoding)
+            acceptable = {c for c, q in accept.raw if q > 0}
+            wildcard_ok = any(c == "*" and q > 0 for c, q in accept.raw)
+
+            best = next((c for c in preference if c in acceptable or (wildcard_ok and c not in {c2 for c2, q in accept.raw if q == 0})), None)
+
+            if best is not None:
+                self.compress_with([best], max_offload_filesize=max_offload_filesize)
+
+    def compress_with(self, encodings: Optional[str] = None, *, max_offload_filesize: int = 32768):
         if not (self.compression and not self.compressed and self.body is not None):
             return
 
@@ -90,7 +102,7 @@ class Message:
                 with open(filepath, "rb") as f:
                     self.body = f.read()
 
-                self.compress(encodings, max_offload_filesize=max_offload_filesize)
+                self.compress_with(encodings, max_offload_filesize=max_offload_filesize)
 
     def decompress(self, *, max_offload_filesize: int = 32768):
         if not (self.compression and self.compressed and self.body is not None):
