@@ -779,7 +779,8 @@ class Protocol(asyncio.Protocol):
 
         etag = response.etag
         if request.headers.get("if-none-match") == str(etag):
-            response = Response(status_code=304, headers=Headers([]))
+            response.status_code = 304
+            response.body = None
         response.headers.set("ETag", str(etag))
 
         response.compress(request.headers.get("Accept-Encoding", ""))

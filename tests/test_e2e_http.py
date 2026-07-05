@@ -492,6 +492,62 @@ class TestRangeRequests:
         writer.close()
 
 
+class TestConditionalRequests:
+    async def test_matching_if_none_match_returns_304_without_body(self, make_server):
+        server = await make_server(handler=handler_returning(lambda req: PlainTextResponse("hello")))
+        reader, writer = await server.open_connection()
+
+        writer.write(b"GET / HTTP/1.1\r\nHost: a\r\n\r\n")
+        await writer.drain()
+        _, headers, _ = await read_http_response(reader)
+        etag = headers["etag"]
+
+        writer.write(f"GET / HTTP/1.1\r\nHost: a\r\nIf-None-Match: {etag}\r\n\r\n".encode())
+        await writer.drain()
+
+        status_line, headers, body = await read_http_response(reader)
+        assert status_line == "HTTP/1.1 304 Not Modified"
+        assert headers["etag"] == etag
+        assert "content-length" not in headers
+        assert "transfer-encoding" not in headers
+        assert body == b""
+        writer.close()
+
+    async def test_304_preserves_headers_from_the_original_response(self, make_server):
+        def make_response(req):
+            return PlainTextResponse("hello", headers=Headers([("Cache-Control", ["max-age=60"]), ("X-Custom", ["keep-me"])]))
+
+        server = await make_server(handler=handler_returning(make_response))
+        reader, writer = await server.open_connection()
+
+        writer.write(b"GET / HTTP/1.1\r\nHost: a\r\n\r\n")
+        await writer.drain()
+        _, headers, _ = await read_http_response(reader)
+        etag = headers["etag"]
+
+        writer.write(f"GET / HTTP/1.1\r\nHost: a\r\nIf-None-Match: {etag}\r\n\r\n".encode())
+        await writer.drain()
+
+        status_line, headers, body = await read_http_response(reader)
+        assert status_line == "HTTP/1.1 304 Not Modified"
+        assert headers["cache-control"] == "max-age=60"
+        assert headers["x-custom"] == "keep-me"
+        assert body == b""
+        writer.close()
+
+    async def test_non_matching_if_none_match_returns_200(self, make_server):
+        server = await make_server(handler=handler_returning(lambda req: PlainTextResponse("hello")))
+        reader, writer = await server.open_connection()
+
+        writer.write(b'GET / HTTP/1.1\r\nHost: a\r\nIf-None-Match: "not-the-real-etag"\r\n\r\n')
+        await writer.drain()
+
+        status_line, headers, body = await read_http_response(reader)
+        assert status_line == "HTTP/1.1 200 OK"
+        assert body == b"hello"
+        writer.close()
+
+
 class TestLimits:
     async def test_max_connections_returns_503_and_closes(self, make_server):
         server = await make_server(handler=handler_returning(lambda req: PlainTextResponse("ok")), max_connections=1)
