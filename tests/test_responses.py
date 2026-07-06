@@ -21,8 +21,12 @@ class TestPlainTextResponse:
         assert resp.headers.get("X-Custom") == "1"
         assert resp.headers.get("Content-Type") == "text/plain"
 
-    def test_minification_always_disabled(self):
+    def test_minification_defaults_true(self):
         resp = PlainTextResponse("hi")
+        assert resp.minification is True
+
+    def test_minification_flag_configurable(self):
+        resp = PlainTextResponse("hi", minification=False)
         assert resp.minification is False
 
 
@@ -36,9 +40,9 @@ class TestHTMLResponse:
         resp = HTMLResponse("<p>hi</p>", minification=True)
         assert resp.minification is True
 
-    def test_minification_defaults_false(self):
+    def test_minification_defaults_true(self):
         resp = HTMLResponse("<p>hi</p>")
-        assert resp.minification is False
+        assert resp.minification is True
 
     def test_range_forwarded(self):
         resp = HTMLResponse("<p>hi</p>", range=(0, 1))

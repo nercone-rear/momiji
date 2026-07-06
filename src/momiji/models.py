@@ -95,10 +95,15 @@ class Message:
             self.headers.set("Content-Encoding", str(content_encoding))
 
         elif isinstance(self.body, (str, os.PathLike)):
+            if getattr(self, "range", None) is not None:
+                return
+
             filepath = self.body
             filesize = os.stat(filepath).st_size
 
             if 0 < filesize <= max_offload_filesize:
+                self.headers.set("Accept-Ranges", "bytes")
+
                 with open(filepath, "rb") as f:
                     self.body = f.read()
 
@@ -176,10 +181,15 @@ class Message:
                 pass
 
         elif isinstance(self.body, (str, os.PathLike)):
+            if getattr(self, "range", None) is not None:
+                return
+
             filepath = self.body
             filesize = os.stat(filepath).st_size
 
             if 0 < filesize <= max_offload_filesize:
+                self.headers.set("Accept-Ranges", "bytes")
+
                 with open(filepath, "rb") as f:
                     self.body = f.read()
 
