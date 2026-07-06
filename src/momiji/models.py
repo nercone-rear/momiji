@@ -11,7 +11,7 @@ import brotlicffi
 import minify_html
 from enum import Enum
 from scour import scour
-from typing import Any, Optional, Literal
+from typing import Any, Optional, Union, Literal
 from dataclasses import dataclass, field
 from collections.abc import AsyncIterator
 
@@ -26,14 +26,14 @@ class Role(Enum):
 
 @dataclass(kw_only=True)
 class Message:
-    client: tuple[ipaddress.IPv4Address | ipaddress.IPv6Address, int] = field(default_factory=lambda: (ipaddress.IPv4Address("0.0.0.0"), 0))
+    client: tuple[Union[ipaddress.IPv4Address, ipaddress.IPv6Address], int] = field(default_factory=lambda: (ipaddress.IPv4Address("0.0.0.0"), 0))
 
     protocol: Literal["HTTP/1.0", "HTTP/1.1"] = "HTTP/1.1"
 
     headers: Headers = field(default_factory=lambda: Headers({}))
     trailers: Optional[Headers] = None
 
-    body: Optional[bytes | str | AsyncIterator[bytes] | os.PathLike] = None
+    body: Optional[Union[bytes, str, AsyncIterator[bytes], os.PathLike]] = None
 
     scheme: Literal["http", "https"] = "http"
     secure: bool = False
@@ -164,6 +164,9 @@ class Message:
 
                     self.body = scour.scourString(self.body.decode("utf-8", errors="replace"), options).encode("utf-8")
 
+                elif content_type.essence.startswith("application/json"):
+                    self.body = json.dumps(json.loads(self.body.decode())).encode()
+
                 else:
                     return
 
@@ -194,15 +197,15 @@ class Request(Message):
         self.url = URL.from_target(self.target, self.scheme, authority)
 
     @property
+    def cookies(self) -> Cookie:
+        return Cookie(self.headers.get("Cookie", ""))
+
+    @property
     def is_websocket_upgrade(self) -> bool:
         upgrade = self.headers.get("Upgrade", "").lower().strip()
         connection_tokens = CommaHeader(self.headers.get("Connection", "")).raw
 
         return (self.method == "GET") and (upgrade == "websocket") and any(t.strip().lower() == "upgrade" for t in connection_tokens)
-
-    @property
-    def cookies(self) -> Cookie:
-        return Cookie(self.headers.get("Cookie", ""))
 
 @dataclass
 class Response(Message):

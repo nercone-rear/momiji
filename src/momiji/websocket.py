@@ -1,5 +1,5 @@
 import asyncio
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, Union
 
 from .errors import WebSocketProtocolError
 
@@ -25,7 +25,7 @@ class WebSocket:
         self.fragment_buffer = bytearray()
         self.closed = False
         self.close_sent = False
-        self.leftover: Optional[bytes | str] = None
+        self.leftover: Optional[Union[bytes, str]] = None
 
     def build_frame(self, opcode: int, payload: bytes, fin: bool = True) -> bytes:
         header = bytearray()
@@ -113,7 +113,7 @@ class WebSocket:
     def send_frame(self, opcode: int, payload: bytes):
         self.transport.write(self.build_frame(opcode, payload, fin=True))
 
-    async def read_message(self) -> bytes | str:
+    async def read_message(self) -> Union[bytes, str]:
         while True:
             frame = self.next_frame()
 
@@ -195,7 +195,7 @@ class WebSocket:
 
                 return message_bytes
 
-    async def read(self, size: int = -1) -> bytes | str:
+    async def read(self, size: int = -1) -> Union[bytes, str]:
         if self.leftover is not None:
             data = self.leftover
             self.leftover = None
@@ -211,7 +211,7 @@ class WebSocket:
         self.leftover = data[size:]
         return data[:size]
 
-    async def write(self, data: bytes | str):
+    async def write(self, data: Union[bytes, str]):
         if isinstance(data, str):
             opcode = OPCODE_TEXT
             payload = data.encode("utf-8")

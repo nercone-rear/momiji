@@ -8,7 +8,6 @@ from .constants import Characters
 
 T = TypeVar("T")
 
-# RFC 6265 4.1.1: cookie-octet, excluding '%' (reserved as our own percent-encoding marker)
 COOKIE_SAFE_CHARS = "".join(chr(c) for c in range(0x21, 0x7F) if c not in (0x22, 0x25, 0x2C, 0x3B, 0x5C))
 
 def cookie_quote(value: str) -> str:
@@ -87,9 +86,13 @@ def unquote(value: str) -> str:
     return value
 
 class Headers:
-    def __init__(self, value: str | list[tuple[str, list[str]]]):
+    def __init__(self, value: Union[str, dict[str, str], list[tuple[str, list[str]]]]):
         if isinstance(value, (str, bytes)):
             self.raw = Headers.parse(value).raw
+        elif isinstance(value, dict):
+            self.raw = []
+            for k, v in value:
+                self.append(k, v)
         elif isinstance(value, list):
             self.raw = value
         else:
@@ -97,6 +100,19 @@ class Headers:
 
     def __str__(self) -> str:
         return self.build()
+
+    def __getitem__(self, key: str) -> Optional[list[str]]:
+        idx = self.find(key)
+        return None if idx is None else self.raw[idx][1]
+
+    def __setitem__(self, key: str, value: Union[str, list[str]]):
+        self.set(key, value, override=True)
+
+    def __contains__(self, item: str) -> bool:
+        return self.find(item) is not None
+
+    def items(self) -> list[tuple[str, str]]:
+        return [(name, v) for name, values in self.raw for v in values]
 
     def find(self, key: str) -> Optional[int]:
         key_lower = key.lower()
@@ -107,24 +123,11 @@ class Headers:
 
         return None
 
-    def __getitem__(self, key: str) -> Optional[list[str]]:
-        idx = self.find(key)
-        return None if idx is None else self.raw[idx][1]
-
-    def __setitem__(self, key: str, value: str | list[str]):
-        self.set(key, value, override=True)
-
-    def __contains__(self, item: str) -> bool:
-        return self.find(item) is not None
-
-    def items(self) -> list[tuple[str, str]]:
-        return [(name, v) for name, values in self.raw for v in values]
-
-    def get(self, key: str, default: Optional[T] = None) -> Optional[str | T]:
+    def get(self, key: str, default: Optional[T] = None) -> Optional[Union[str, T]]:
         idx = self.find(key)
         return default if idx is None else ", ".join(self.raw[idx][1])
 
-    def set(self, key: str, value: str | list[str], override: bool = True):
+    def set(self, key: str, value: Union[str, list[str]], override: bool = True):
         values = [value] if isinstance(value, str) else list(value)
         idx = self.find(key)
 
@@ -193,7 +196,7 @@ class Headers:
         return "".join(f"{name}: {value}\r\n" for name, value in self.items())
 
 class CommaHeader:
-    def __init__(self, value: str | list[str]):
+    def __init__(self, value: Union[str, list[str]]):
         if isinstance(value, (str, bytes)):
             self.raw = CommaHeader.parse(value).raw
         elif isinstance(value, list):
@@ -205,7 +208,7 @@ class CommaHeader:
     def __contains__(self, item: str) -> bool:
         return item in self.raw
 
-    def set(self, value: str | list[str]):
+    def set(self, value: Union[str, list[str]]):
         if isinstance(value, str):
             self.raw = [value]
         elif isinstance(value, list):
@@ -225,7 +228,7 @@ class CommaHeader:
         return ", ".join(self.raw)
 
 class Link:
-    def __init__(self, value: str | list[tuple[str, dict[str, str]]]):
+    def __init__(self, value: Union[str, list[tuple[str, dict[str, str]]]]):
         if isinstance(value, (str, bytes)):
             self.raw = Link.parse(value).raw
         elif isinstance(value, list):
@@ -280,7 +283,7 @@ class Link:
         return ", ".join(parts)
 
 class AcceptEncoding:
-    def __init__(self, value: str | list[tuple[str, float]]):
+    def __init__(self, value: Union[str, list[tuple[str, float]]]):
         if isinstance(value, (str, bytes)):
             self.raw = AcceptEncoding.parse(value).raw
         elif isinstance(value, list):
@@ -412,11 +415,11 @@ class ETag:
     def strong_match(self, other: Union[str, "ETag"]) -> bool:
         return (not self.weak) and (not ETag(other).weak) and (self.opaque_tag == ETag(other).opaque_tag)
 
-    def weak_match(self, other: str | "ETag") -> bool:
+    def weak_match(self, other: Union[str, "ETag"]) -> bool:
         return self.opaque_tag == ETag(other).opaque_tag
 
 class Cookie:
-    def __init__(self, value: str | dict[str, str]):
+    def __init__(self, value: Union[str, dict[str, str]]):
         if isinstance(value, (str, bytes)):
             self.raw = Cookie.parse(value).raw
         elif isinstance(value, dict):
@@ -436,7 +439,7 @@ class Cookie:
     def __len__(self) -> int:
         return len(self.raw)
 
-    def get(self, key: str, default: Optional[T] = None) -> Optional[str | T]:
+    def get(self, key: str, default: Optional[T] = None) -> Optional[Union[str, T]]:
         return self.raw.get(key, default)
 
     def items(self) -> list[tuple[str, str]]:
