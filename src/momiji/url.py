@@ -58,7 +58,6 @@ class URL:
 
         if "://" in target:
             head, _, remainder = target.partition("://")
-            target_scheme = head
 
             end = len(remainder)
             for sep in ("/", "?", "#"):
@@ -75,7 +74,7 @@ class URL:
             if not path:
                 path = "/"
 
-            return cls(scheme=target_scheme, host=host, port=port, path=path, query=query, fragment=fragment)
+            return cls(scheme=head, host=host, port=port, path=path, query=query, fragment=fragment)
 
         if target.startswith("/"):
             path, query, fragment = split_path_query_fragment(target)

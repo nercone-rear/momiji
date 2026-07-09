@@ -91,7 +91,7 @@ class Headers:
             self.raw = Headers.parse(value).raw
         elif isinstance(value, dict):
             self.raw = []
-            for k, v in value:
+            for k, v in value.items():
                 self.append(k, v)
         elif isinstance(value, list):
             self.raw = value

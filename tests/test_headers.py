@@ -135,6 +135,21 @@ class TestHeadersParse:
             Headers.parse(": bar\r\n")
 
 
+class TestHeadersDictInit:
+    def test_single_entry(self):
+        h = Headers({"Host": "example.com"})
+        assert h.get("Host") == "example.com"
+
+    def test_multiple_entries(self):
+        h = Headers({"Host": "example.com", "X-Foo": "bar"})
+        assert h.get("Host") == "example.com"
+        assert h.get("X-Foo") == "bar"
+
+    def test_empty_dict_yields_no_headers(self):
+        h = Headers({})
+        assert h.raw == []
+
+
 class TestHeadersMutation:
     def test_set_overrides_existing_by_default(self):
         h = Headers([("X-Foo", ["a"])])
