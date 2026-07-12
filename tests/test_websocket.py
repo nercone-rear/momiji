@@ -11,9 +11,13 @@ from conftest import build_client_ws_frame
 class FakeTransport:
     def __init__(self):
         self.written = bytearray()
+        self.closed = False
 
     def write(self, data: bytes):
         self.written.extend(data)
+
+    def close(self):
+        self.closed = True
 
 
 def make_ws() -> tuple[WebSocket, FakeTransport]:
@@ -72,6 +76,27 @@ class TestControlFramePayloadLimit:
         opcode, payload = parse_frame(bytes(transport.written))
         assert int.from_bytes(payload[:2], "big") == 1000
         assert payload[2:] == b"bye"
+
+
+class TestClose:
+    # A server-initiated close() must tear down the connection itself:
+    # callers that only send the close frame and forget to close the
+    # transport leak the socket forever, since nothing else will close it
+    # unless the client happens to echo a close frame back.
+    def test_close_closes_transport(self):
+        ws, transport = make_ws()
+        ws.close(code=1000, reason="bye")
+
+        assert transport.closed
+
+    def test_second_close_call_is_a_noop(self):
+        ws, transport = make_ws()
+        ws.close(code=1000, reason="bye")
+        transport.written.clear()
+
+        ws.close(code=1001, reason="again")
+
+        assert bytes(transport.written) == b""
 
 
 class TestCloseFramePayloadValidation:

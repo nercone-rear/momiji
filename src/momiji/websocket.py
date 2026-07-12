@@ -230,4 +230,9 @@ class WebSocket:
 
         self.close_sent = True
         payload = code.to_bytes(2, "big") + reason.encode("utf-8")[:123]
-        self.transport.write(self.build_frame(OPCODE_CLOSE, payload, fin=True))
+
+        try:
+            self.transport.write(self.build_frame(OPCODE_CLOSE, payload, fin=True))
+            self.transport.close()
+        except Exception:
+            pass
